@@ -156,7 +156,7 @@ module opl4_pcm (
 	typedef enum logic [4:0] {
 		S_IDLE, S_RD0, S_RD1, S_RD2, S_RD3, S_RD4, S_RD5, S_RD6, S_RD7, S_RD8,
 		S_CALC, S_ENV, S_ENV2, S_ENV3, S_FETCH0, S_FETCH1, S_OUT, S_OUT2, S_NEXT, S_DONE,
-		S_HDR_REQ, S_HDR_WAIT
+		S_HDR_REQ, S_HDR_WAIT, S_HDR_HI
 	} state_t;
 	state_t state;
 
@@ -195,6 +195,7 @@ module opl4_pcm (
 
 	// hoisted FSM scratch (Quartus 17 dislikes unnamed-block declarations)
 	logic [8:0]  hs_wavnum;
+	logic        w_wav_hi;     // Pocket: wavenum bit 8, registered in S_HDR_HI
 	logic [21:0] hs_base;
 	// Pipeline registers splitting the two deep stages. Both were single-cycle
 	// and both dominated clk_sys: the envelope chain
@@ -407,11 +408,19 @@ module opl4_pcm (
 				S_RD0: begin
 					w_byte0   <= pcm_rdata;                 // wave num low
 					pcm_raddr <= 8'h20 + {3'd0, ch};
-					state     <= S_HDR_REQ;
+					state     <= S_HDR_HI;
+				end
+				// Pocket port (C8 timing): register the wavenum high bit first,
+				// so the 256:1 register-file read and the x12/bank arithmetic
+				// below land in different clocks. Header loads happen only on
+				// key-on; the extra clock is invisible.
+				S_HDR_HI: begin
+					w_wav_hi <= pcm_rdata[0];
+					state    <= S_HDR_REQ;
 				end
 				S_HDR_REQ: begin
 					// compute header address: 12*wavnum (+bank window)
-					hs_wavnum = {pcm_rdata[0], w_byte0};
+					hs_wavnum = {w_wav_hi, w_byte0};
 					hs_base   = 22'(hs_wavnum) * 22'd12;
 					if (hs_wavnum >= 9'd384 && wave_table_bank != 3'd0)
 						hs_base = (22'(wave_table_bank) << 19) + (22'(hs_wavnum - 9'd384) * 22'd12);
