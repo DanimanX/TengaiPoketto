@@ -763,9 +763,6 @@ set_global_assignment -name SEED 1
 # QSF explains why for MiSTer: a regional network reaches one quadrant, and the
 # SDRAM DQ pins are spread across banks, so the I/O registers cannot pack and
 # the capture path fails. Same device family, same reason.
-set_instance_assignment -name GLOBAL_SIGNAL "GLOBAL CLOCK" -to "ic|iki|u_core|pll|pll_inst|altera_pll_i|general[4].gpll~PLL_OUTPUT_COUNTER|divclk"
-set_instance_assignment -name GLOBAL_SIGNAL "GLOBAL CLOCK" -to "ic|iki|u_core|pll|pll_inst|altera_pll_i|general[5].gpll~PLL_OUTPUT_COUNTER|divclk"
-set_instance_assignment -name GLOBAL_SIGNAL "GLOBAL CLOCK" -to "ic|iki|u_core|pll|pll_inst|altera_pll_i|general[1].gpll~PLL_OUTPUT_COUNTER|divclk"
 # registers in the I/O cells for the DRAM pins
 set_instance_assignment -name FAST_OUTPUT_REGISTER ON -to dram_a[*]
 set_instance_assignment -name FAST_OUTPUT_REGISTER ON -to dram_ba[*]
@@ -776,8 +773,6 @@ set_instance_assignment -name FAST_OUTPUT_REGISTER ON -to dram_ras_n
 set_instance_assignment -name FAST_OUTPUT_REGISTER ON -to dram_cas_n
 set_instance_assignment -name FAST_OUTPUT_REGISTER ON -to dram_we_n
 set_instance_assignment -name FAST_OUTPUT_REGISTER ON -to dram_dq[*]
-set_instance_assignment -name FAST_OUTPUT_ENABLE_REGISTER ON -to dram_dq[*]
-set_instance_assignment -name FAST_INPUT_REGISTER ON -to dram_dq[*]
 set_instance_assignment -name ALLOW_SYNCH_CTRL_USAGE OFF -to *dram_*
 
 # ---------------------------------------------------------------------------------------------------------------
