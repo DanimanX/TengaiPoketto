@@ -446,6 +446,21 @@ always @(posedge clk, posedge rst) begin
     end
 end
 
+// Pocket port (TengaiPoketto): the CH3 effect-mode registers are written by
+// the CPU on any clk, but jt12_pg only samples on clk_en. Shadow them on
+// clk_en so every register feeding phinc_II changes only on clk_en edges,
+// which makes the multicycle in core_constraints.sdc exact (clk_en pulses
+// are >= 10 clk apart). Adds at most one clk_en of write latency.
+reg        effect_q;
+reg [ 2:0] block_ch3op1_q, block_ch3op2_q, block_ch3op3_q;
+reg [10:0] fnum_ch3op1_q,  fnum_ch3op2_q,  fnum_ch3op3_q;
+always @(posedge clk) if(clk_en) begin
+    effect_q       <= effect;
+    block_ch3op1_q <= block_ch3op1;  fnum_ch3op1_q <= fnum_ch3op1;
+    block_ch3op2_q <= block_ch3op2;  fnum_ch3op2_q <= fnum_ch3op2;
+    block_ch3op3_q <= block_ch3op3;  fnum_ch3op3_q <= fnum_ch3op3;
+end
+
 jt12_reg #(.num_ch(num_ch)) u_reg(
     .rst        ( rst       ),
     .clk        ( clk       ),      // P1
@@ -480,13 +495,13 @@ jt12_reg #(.num_ch(num_ch)) u_reg(
     .cur_ch     ( cur_ch    ),
     .cur_op     ( cur_op    ),
     // CH3 Effect-mode operation
-    .effect     ( effect    ),      // allows independent freq. for CH 3
-    .fnum_ch3op2( fnum_ch3op2 ),
-    .fnum_ch3op3( fnum_ch3op3 ),
-    .fnum_ch3op1( fnum_ch3op1 ),
-    .block_ch3op2( block_ch3op2 ),
-    .block_ch3op3( block_ch3op3 ),
-    .block_ch3op1( block_ch3op1 ),
+    .effect     ( effect_q  ),      // allows independent freq. for CH 3
+    .fnum_ch3op2( fnum_ch3op2_q ),
+    .fnum_ch3op3( fnum_ch3op3_q ),
+    .fnum_ch3op1( fnum_ch3op1_q ),
+    .block_ch3op2( block_ch3op2_q ),
+    .block_ch3op3( block_ch3op3_q ),
+    .block_ch3op1( block_ch3op1_q ),
     .latch_fnum ( latch_fnum    ),
     // Operator
     .xuse_prevprev1 ( xuse_prevprev1  ),

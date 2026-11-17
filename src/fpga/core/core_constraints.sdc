@@ -168,7 +168,10 @@ if {[get_collection_size $vidsrc] > 0 && [get_collection_size $palbram] > 0} {
 #   * jt12_pg's stage-II regs as SOURCES (detune_mod_II -> the pg_sum /
 #     jt12_sh_rst pipeline): already audited clk_en-gated above.
 #   * jt12_sh_rst (u_pad) as a destination: single clocked block, clk_en.
-set jtsrc [get_registers {*jt10:u_ym2610|*jt12_reg:u_reg|cur_ch[*] *jt10:u_ym2610|*jt12_reg:u_reg|cur_op[*] *jt10:u_ym2610|*jt12_lfo:*|lfo_mod[*] *jt10:u_ym2610|*jt12_pg:u_pg|phinc_II[*] *jt10:u_ym2610|*jt12_pg:u_pg|keycode_II[*] *jt10:u_ym2610|*jt12_pg:u_pg|detune_mod_II[*]}]
+# Pocket: also jt12_reg_ch's channel outputs (clocked under `if(cen)`, cen =
+# clk_en) and jt12_mmr's CH3 effect-mode shadows (effect_q, *_ch3op*_q,
+# added in the vendored jt12_mmr.v and clocked under clk_en).
+set jtsrc [get_registers {*jt10:u_ym2610|*jt12_reg:u_reg|cur_ch[*] *jt10:u_ym2610|*jt12_reg:u_reg|cur_op[*] *jt10:u_ym2610|*jt12_lfo:*|lfo_mod[*] *jt10:u_ym2610|*jt12_pg:u_pg|phinc_II[*] *jt10:u_ym2610|*jt12_pg:u_pg|keycode_II[*] *jt10:u_ym2610|*jt12_pg:u_pg|detune_mod_II[*] *jt10:u_ym2610|*jt12_reg_ch:u_regch|fnum[*] *jt10:u_ym2610|*jt12_reg_ch:u_regch|block[*] *jt10:u_ym2610|*jt12_reg_ch:u_regch|pms[*] *jt10:u_ym2610|*jt12_mmr:u_mmr|effect_q *jt10:u_ym2610|*jt12_mmr:u_mmr|fnum_ch3op*_q[*] *jt10:u_ym2610|*jt12_mmr:u_mmr|block_ch3op*_q[*]}]
 set jtdst [get_registers {*jt10:u_ym2610|*jt12_pg:u_pg|phinc_II[*] *jt10:u_ym2610|*jt12_pg:u_pg|keycode_II[*] *jt10:u_ym2610|*jt12_pg:u_pg|detune_mod_II[*] *jt10:u_ym2610|*jt12_pg:u_pg|jt12_sh_rst:u_pad|*}]
 if {[get_collection_size $jtsrc] > 0 && [get_collection_size $jtdst] > 0} {
     set_multicycle_path -setup -end 2 -from $jtsrc -to $jtdst

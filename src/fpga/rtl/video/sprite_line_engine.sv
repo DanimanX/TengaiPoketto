@@ -229,11 +229,17 @@ module sprite_line_engine (
 		.row_bytes(row_bytes_r), .flip_x(1'b0), .pixel(row_pixel)
 	);
 
-	logic [3:0] cur_pixel;
-	assign cur_pixel = row_pixel[zsi_src_col];
-
-	logic opaque;
-	assign opaque = !((cur_pixel == 4'd0 && trans_pen0) || (cur_pixel == 4'd15 && trans_pen15));
+	// Pocket port: the column emit is split in two stages so the zoom
+	// source-index calculation (stage A, S_COL) and the 16:1 pixel mux +
+	// transparency test (stage B) land in different clk_sys cycles.
+	logic        pe_en = 1'b0;
+	logic [3:0]  pe_src;
+	logic [8:0]  pe_x;
+	logic [4:0]  pe_color;
+	logic [1:0]  pe_prio;
+	logic [3:0]  pe_pixel;
+	assign pe_pixel = row_pixel[pe_src];
+	wire pe_opaque = !((pe_pixel == 4'd0 && trans_pen0) || (pe_pixel == 4'd15 && trans_pen15));
 
 	logic signed [10:0] screen_x_full;
 	assign screen_x_full = $signed({st_sub_x_r[9], st_sub_x_r}) + $signed({7'd0, dst_col});
@@ -261,7 +267,7 @@ module sprite_line_engine (
 	} state_t;
 	state_t state;
 
-	assign busy = (state != S_IDLE);
+	assign busy = (state != S_IDLE) || pe_en || fb_we;  // incl. a pixel still in the emit pipe
 
 	// Hard resync: line_tick while rendering aborts the line. `aborting`
 	// suppresses writes the same cycle it sets; the FSM then drains any
@@ -277,6 +283,7 @@ module sprite_line_engine (
 			lut_req     <= 1'b0;
 			gfxrom_req  <= 1'b0;
 			fb_we        <= 1'b0;
+			pe_en        <= 1'b0;
 			ovr_ev       <= 1'b0;
 			aborting    <= 1'b0;
 			line_r       <= 8'd0;
@@ -299,6 +306,20 @@ module sprite_line_engine (
 		end else begin
 			fb_we   <= 1'b0;
 			ovr_ev <= 1'b0;
+			pe_en  <= 1'b0;
+
+			// stage B of the pixel emit: pixel mux + transparency off
+			// registered operands. row_bytes_r only reloads in S_ROW_WAIT,
+			// which is >= 2 clks after the last S_COL, so it is still the
+			// row stage A saw. A pixel in flight when line_tick fires is
+			// dropped: that line is being cut short (overrun) anyway.
+			if (pe_en && pe_opaque && !line_tick) begin
+				fb_we       <= 1'b1;
+				fb_x        <= pe_x;
+				fb_pixel    <= pe_pixel;
+				fb_color    <= pe_color;
+				fb_priority <= pe_prio;
+			end
 
 			if (line_tick && state != S_IDLE) begin
 				// the line under construction is cut short
@@ -446,13 +467,12 @@ module sprite_line_engine (
 					end
 
 					S_COL: begin
-						if (onscreen && opaque) begin
-							fb_we        <= 1'b1;
-							fb_x          <= screen_x_full[8:0];
-							fb_pixel     <= cur_pixel;
-							fb_color     <= a_color;
-							fb_priority <= a_priority;
-						end
+						// stage A of the pixel emit (Pocket timing split)
+						pe_en     <= onscreen;
+						pe_src    <= zsi_src_col;
+						pe_x      <= screen_x_full[8:0];
+						pe_color  <= a_color;
+						pe_prio   <= a_priority;
 
 						if ({1'b0, dst_col} != a_dst_size_x - 5'd1) begin
 							dst_col <= dst_col + 4'd1;
