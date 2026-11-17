@@ -19,7 +19,7 @@ run() {  # name top sources...
     fi
     # opl4_pcm loads its table from rtl/sound/opl4/..., relative to the cwd
     if (cd "$R/.." && "$out/$name/V$top") >"$out/$name.log" 2>&1 \
-       && grep -qE 'ALL (TESTS )?PASS' "$out/$name.log"; then
+       && grep -qE 'ALL (TESTS )?PASS|^PASS: adpcma_sample_cache' "$out/$name.log"; then
         echo "PASS"
     else
         echo "FAIL (see $out/$name.log)"; fail=1
@@ -30,6 +30,9 @@ run sprite_line_diff tb_sprite_line_diff \
     "$R/memory/dpram.sv" "$R"/video/sprite_*.sv "$R/video/tile_row_decode.sv" \
     "$R/memory/sdram_narrow_bridge.sv" "$U/sprite_line_tb/tb_sprite_line_diff.sv"
 run opl4 tb_opl4 "$R"/sound/opl4/*.sv "$U/opl4_tb/tb_opl4.sv"
+run adpcma_sample_cache tb_adpcma_sample_cache "$R/sound/adpcma_sample_cache.sv" \
+    "$R/memory/sdram/sdram.sv" "$R/memory/sdram_phy.sv" \
+    "$U/sdram_tb/sdram_chip_model.sv" "$U/adpcma_sample_cache_tb/tb_adpcma_sample_cache.sv"
 
 printf '%-24s ' pk_io_psk
 if "$here/pk_io_tb/run.sh" >"$out/pk_io.log" 2>&1 && grep -q 'ALL PASS' "$out/pk_io.log"; then

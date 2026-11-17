@@ -80,7 +80,7 @@ module adpcma_sample_cache #(
 	localparam int IW = $clog2(ENTRIES);
 
 	typedef enum logic [2:0] {
-		S_IDLE, S_LOOK, S_HIT, S_FILL, S_DRAIN, S_PF
+		S_IDLE, S_LOOK, S_HIT, S_FILL, S_DRAIN, S_PF, S_CMP
 	} state_t;
 	state_t st;
 
@@ -124,18 +124,31 @@ module adpcma_sample_cache #(
 	// resident?" in S_DRAIN. Two arrays would double the compare logic on a
 	// design where only one fitter seed in four closes timing.
 	wire [21:0] look_tag = (st == S_DRAIN) ? pf_tag : pend_addr[24:3];
+	//
+	// Pocket port (C8 timing): the per-entry compares are REGISTERED
+	// (match_q) and the decisions read them one clk later, so the 22-bit
+	// compare array and the hit/rr/fill_tag decision no longer share a cycle.
+	// S_IDLE now hands off to S_CMP, which decides on match_q computed from
+	// pend_addr during the S_IDLE cycle; S_DRAIN waits one settle clk
+	// (drain_settle) so match_q reflects pf_tag and any tag S_FILL just wrote.
+	// Cost: one clk per demand access, against a 118-clk deadline.
+	logic [ENTRIES-1:0] match_q;
+	always_ff @(posedge clk)
+		for (int i = 0; i < ENTRIES; i++)
+			match_q[i] <= tval[i] && (tag[i] == look_tag);
 	logic          hit;
 	logic [IW-1:0] hit_idx;
 	always_comb begin
 		hit     = 1'b0;
 		hit_idx = '0;
 		for (int i = 0; i < ENTRIES; i++) begin
-			if (tval[i] && (tag[i] == look_tag)) begin
+			if (match_q[i]) begin
 				hit     = 1'b1;
 				hit_idx = i[IW-1:0];
 			end
 		end
 	end
+	logic drain_settle;
 
 	// Byte k of a granule is g_data[8*k +: 8]: sdram.sv captures word 0 (the
 	// lowest byte address) into bits [15:0] and ascends, and within a word
@@ -162,6 +175,7 @@ module adpcma_sample_cache #(
 			st      <= S_IDLE;
 			rr      <= '0;
 			pf_want <= 1'b0;
+			drain_settle <= 1'b0;
 			req_d     <= 1'b0;
 			pend      <= 1'b0;
 			pend_addr <= 25'd0;
@@ -177,11 +191,18 @@ module adpcma_sample_cache #(
 					// into the next one, and will not need it for ~108 us.
 					pf_want  <= (pend_addr[2:0] == 3'd7);
 					pf_tag   <= pend_addr[24:3] + 22'd1;
+					fill_tag <= pend_addr[24:3];
+					st       <= S_CMP;
+				end
+
+				// match_q now holds the compares for pend_addr (look_tag was
+				// pend_addr during the S_IDLE cycle; pend_addr cannot change
+				// before valid, both clients wait for it).
+				S_CMP: begin
 					if (hit && !inval) begin
 						sel_idx <= hit_idx;
 						st      <= S_LOOK;
 					end else begin
-						fill_tag <= pend_addr[24:3];
 						sel_idx  <= rr;
 						rr       <= rr + 1'b1;
 						st       <= S_FILL;
@@ -190,12 +211,13 @@ module adpcma_sample_cache #(
 
 				S_LOOK: st <= S_HIT;      // cdata_q settling
 
-				S_HIT: st <= S_DRAIN;     // valid pulses this cycle
+				S_HIT: begin st <= S_DRAIN; drain_settle <= 1'b1; end   // valid pulses this cycle
 
 				S_FILL: if (g_valid) begin
 					tag[sel_idx]  <= fill_tag;
 					tval[sel_idx] <= !inval;
 					st            <= S_DRAIN;
+					drain_settle  <= 1'b1;
 				end
 
 				// Wait for a held req to drop before looking again, exactly as
@@ -204,7 +226,8 @@ module adpcma_sample_cache #(
 				// second read. Then spend the idle time prefetching: the next
 				// demand fetch is ~9 us away, so this always finishes long
 				// before anything waits on it. `hit` reads pf_tag here.
-				S_DRAIN: if (!req) begin
+				S_DRAIN: if (drain_settle) drain_settle <= 1'b0;
+				else if (!req) begin
 					pf_want <= 1'b0;
 					if (pf_want && !hit && !pend) begin
 						fill_tag <= pf_tag;

@@ -167,12 +167,12 @@ if {[get_collection_size $vidsrc] > 0 && [get_collection_size $palbram] > 0} {
 #     cen-cadenced MMR writes -- every transition is >= cen-spaced.
 #   * jt12_pg's stage-II regs as SOURCES (detune_mod_II -> the pg_sum /
 #     jt12_sh_rst pipeline): already audited clk_en-gated above.
-#   * jt12_sh_rst (u_pad) as a destination: single clocked block, clk_en.
+#   * jt12_sh_rst (u_pad, u_phsh) as destinations: single clocked block, clk_en.
 # Pocket: also jt12_reg_ch's channel outputs (clocked under `if(cen)`, cen =
 # clk_en) and jt12_mmr's CH3 effect-mode shadows (effect_q, *_ch3op*_q,
 # added in the vendored jt12_mmr.v and clocked under clk_en).
 set jtsrc [get_registers {*jt10:u_ym2610|*jt12_reg:u_reg|cur_ch[*] *jt10:u_ym2610|*jt12_reg:u_reg|cur_op[*] *jt10:u_ym2610|*jt12_lfo:*|lfo_mod[*] *jt10:u_ym2610|*jt12_pg:u_pg|phinc_II[*] *jt10:u_ym2610|*jt12_pg:u_pg|keycode_II[*] *jt10:u_ym2610|*jt12_pg:u_pg|detune_mod_II[*] *jt10:u_ym2610|*jt12_reg_ch:u_regch|fnum[*] *jt10:u_ym2610|*jt12_reg_ch:u_regch|block[*] *jt10:u_ym2610|*jt12_reg_ch:u_regch|pms[*] *jt10:u_ym2610|*jt12_mmr:u_mmr|effect_q *jt10:u_ym2610|*jt12_mmr:u_mmr|fnum_ch3op*_q[*] *jt10:u_ym2610|*jt12_mmr:u_mmr|block_ch3op*_q[*]}]
-set jtdst [get_registers {*jt10:u_ym2610|*jt12_pg:u_pg|phinc_II[*] *jt10:u_ym2610|*jt12_pg:u_pg|keycode_II[*] *jt10:u_ym2610|*jt12_pg:u_pg|detune_mod_II[*] *jt10:u_ym2610|*jt12_pg:u_pg|jt12_sh_rst:u_pad|*}]
+set jtdst [get_registers {*jt10:u_ym2610|*jt12_pg:u_pg|phinc_II[*] *jt10:u_ym2610|*jt12_pg:u_pg|keycode_II[*] *jt10:u_ym2610|*jt12_pg:u_pg|detune_mod_II[*] *jt10:u_ym2610|*jt12_pg:u_pg|jt12_sh_rst:u_pad|* *jt10:u_ym2610|*jt12_pg:u_pg|jt12_sh_rst:u_phsh|*}]
 if {[get_collection_size $jtsrc] > 0 && [get_collection_size $jtdst] > 0} {
     set_multicycle_path -setup -end 2 -from $jtsrc -to $jtdst
     set_multicycle_path -hold  -end 1 -from $jtsrc -to $jtdst
@@ -214,14 +214,45 @@ if {[get_collection_size $jtsrc] > 0 && [get_collection_size $jtdst] > 0} {
 # edge, so the (w_env+1)*eg_inc multiply itself stays a full-rate path.
 # Sources are the NAMED cached registers, never an opl4_pcm|* glob, so the
 # single-cycle w_* family cannot be swept in by accident.
+# Pocket: the S_ENV pipeline registers added upstream after this audit
+# (p_eg_inc / p_rate / p_frac_zero) are written ONLY in S_ENV, so the same
+# 2-edge window from the c_* fields applies to them.
 set pcmsrc [get_registers {*|opl4_pcm:u_pcm|c_rc[*] *|opl4_pcm:u_pcm|c_rr[*] *|opl4_pcm:u_pcm|c_ar[*] *|opl4_pcm:u_pcm|c_dr[*] *|opl4_pcm:u_pcm|c_sl[*] *|opl4_pcm:u_pcm|c_sr[*] *|opl4_pcm:u_pcm|c_oct[*] *|opl4_pcm:u_pcm|c_fnum[*] *|opl4_pcm:u_pcm|c_damp}]
-set pcmdst [get_registers {*|opl4_pcm:u_pcm|mem_rd_addr[*] *|opl4_pcm:u_pcm|mem_rd_req *|opl4_pcm:u_pcm|state[*] *|opl4_pcm:u_pcm|ch_env[*] *|opl4_pcm:u_pcm|ch_eg_state[*] *|opl4_pcm:u_pcm|ch_nextpos[*] *|opl4_pcm:u_pcm|ch_tl[*] *|opl4_pcm:u_pcm|ch_lfo[*] *|opl4_pcm:u_pcm|w_step[*]}]
+set pcmdst [get_registers {*|opl4_pcm:u_pcm|mem_rd_addr[*] *|opl4_pcm:u_pcm|mem_rd_req *|opl4_pcm:u_pcm|state[*] *|opl4_pcm:u_pcm|ch_env[*] *|opl4_pcm:u_pcm|ch_eg_state[*] *|opl4_pcm:u_pcm|ch_nextpos[*] *|opl4_pcm:u_pcm|ch_tl[*] *|opl4_pcm:u_pcm|ch_lfo[*] *|opl4_pcm:u_pcm|w_step[*] *|opl4_pcm:u_pcm|p_eg_inc[*] *|opl4_pcm:u_pcm|p_rate[*] *|opl4_pcm:u_pcm|p_frac_zero}]
 if {[get_collection_size $pcmsrc] > 0 && [get_collection_size $pcmdst] > 0} {
     set_multicycle_path -setup -end 2 -from $pcmsrc -to $pcmdst
     set_multicycle_path -hold  -end 1 -from $pcmsrc -to $pcmdst
 } else {
     post_message -type critical_warning \
         "Psikyo.sdc: OPL4 PCM envelope multicycle NOT applied (empty collection)"
+}
+
+# ---------------------------------------------------------------------------
+# Pocket: OPL4 PCM S_ENV2 / S_OUT pipeline registers
+#
+#   * w_env is written ONLY in S_CALC; p_env_next/p_st_next ONLY in S_ENV2;
+#     S_CALC -> S_ENV -> S_ENV2 is unconditional, one state per clk, so
+#     2 edges. p_eg_inc (written in S_ENV) stays a full-rate source.
+#   * w_curpos/c_end/c_loop -> ch_nextpos: see possrc below.
+#   * c_pan is written ONLY in S_RD1; p_lvol/p_rvol ONLY in S_OUT, many
+#     states later (>= 2 edges).
+set envsrc [get_registers {*|opl4_pcm:u_pcm|w_env[*]}]
+set envdst [get_registers {*|opl4_pcm:u_pcm|p_env_next[*] *|opl4_pcm:u_pcm|p_st_next[*]}]
+set pansrc [get_registers {*|opl4_pcm:u_pcm|c_pan[*]}]
+# w_curpos is written ONLY in S_CALC and c_end/c_loop ONLY in S_RD8; the
+# position advance writes ch_nextpos in S_ENV3 (S_CALC -> S_ENV -> S_ENV2 ->
+# S_ENV3, 3 edges). The S_RD1 keyon write of ch_nextpos is a constant.
+# w_step (written in S_ENV2) stays a full-rate source.
+set possrc [get_registers {*|opl4_pcm:u_pcm|w_curpos[*] *|opl4_pcm:u_pcm|c_end[*] *|opl4_pcm:u_pcm|c_loop[*]}]
+set posdst [get_registers {*|opl4_pcm:u_pcm|ch_nextpos[*]}]
+set pandst [get_registers {*|opl4_pcm:u_pcm|p_lvol[*] *|opl4_pcm:u_pcm|p_rvol[*]}]
+foreach {src dst nm} [list $envsrc $envdst env2 $pansrc $pandst pan $possrc $posdst pos] {
+    if {[get_collection_size $src] > 0 && [get_collection_size $dst] > 0} {
+        set_multicycle_path -setup -end 2 -from $src -to $dst
+        set_multicycle_path -hold  -end 1 -from $src -to $dst
+    } else {
+        post_message -type critical_warning "core_constraints: OPL4 $nm multicycle NOT applied (empty collection)"
+    }
 }
 
 # ---------------------------------------------------------------------------
