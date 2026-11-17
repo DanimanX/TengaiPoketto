@@ -11,7 +11,8 @@ Images are a 544-byte header followed by the assembled <rom index="0"> stream:
   [0..3] magic b"PSK\\x01"   [4] board flags (blob byte 0, 0 if none)   [5] header version = 1
   [6..7] board blob length (u16)          [8..11] payload length (u32)
   [12..15] payload CRC32 (u32)            [16..23] DIP defaults, 0xFF padded to 8 bytes
-  [24..31] zero                           [32..543] board blob, 0x00 padded to 512 bytes
+  [24] rotation (0 horizontal, 1 vertical, from <rotation>)  [25..31] zero
+                                                                    [32..543] board blob, 0x00 padded to 512 bytes
   [544..] payload, then 0xFF padding to a multiple of 4 bytes
 
 Assembly follows mra-tools-c: <part> elements append in document order; a part without a crc
@@ -162,10 +163,11 @@ def read_mra(path):
         raise RomError(f'{path}: {len(dips)} DIP bytes, at most {DIP_MAX} fit the header')
     return {'setname': (root.findtext('setname') or os.path.splitext(os.path.basename(path))[0]).strip(),
             'name': (root.findtext('name') or '').strip(), 'zips': rom0.get('zip') or '',
-            'rom0': rom0, 'blob': blob, 'flags': blob[0] if blob else 0, 'dips': dips}
+            'rom0': rom0, 'blob': blob, 'flags': blob[0] if blob else 0, 'dips': dips,
+            'vertical': (root.findtext('rotation') or '').strip().lower().startswith('vert')}
 
 
-def make_image(payload, blob, dips):
+def make_image(payload, blob, dips, vertical=False):
     if len(blob) > BLOB_MAX:
         raise RomError(f'board blob is {len(blob)} bytes, max {BLOB_MAX}')
     image = bytearray(HEADER_SIZE)
@@ -175,6 +177,7 @@ def make_image(payload, blob, dips):
     image[8:12] = len(payload).to_bytes(4, 'little')
     image[12:16] = crc32(payload).to_bytes(4, 'little')
     image[16:24] = bytes(dips) + bytes([DIP_PAD]) * (DIP_MAX - len(dips))
+    image[24] = 1 if vertical else 0
     image[32:32 + len(blob)] = blob            # the rest of the 512-byte area stays 0x00
     return image + payload + bytes([TAIL_PAD]) * (-(HEADER_SIZE + len(payload)) % ALIGN)
 
@@ -192,7 +195,7 @@ def build_image(mra_path, roms_dir):
     finally:
         for zf in handles:
             zf.close()
-    return mra, bytes(payload), make_image(payload, mra['blob'], mra['dips'])
+    return mra, bytes(payload), make_image(payload, mra['blob'], mra['dips'], mra['vertical'])
 
 
 def write_file(path, data):
@@ -235,7 +238,7 @@ def cmd_list(mra_dir):
     for path in find_mras(mra_dir):
         mra = read_mra(path)
         print(f'{mra["setname"]:<12} flags=0x{mra["flags"]:02X} '
-              f'dips={dips_text(mra["dips"])}  {mra["name"]}')
+              f'dips={dips_text(mra["dips"])} {"V" if mra["vertical"] else "H"}  {mra["name"]}')
     return 0
 
 

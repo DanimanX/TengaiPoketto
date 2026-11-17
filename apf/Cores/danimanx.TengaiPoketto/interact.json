@@ -1,0 +1,91 @@
+{
+    "interact": {
+        "magic": "APF_VER_1",
+        "variables": [
+            {
+                "name": "Reset Core",
+                "id": 0,
+                "type": "action",
+                "enabled": true,
+                "address": "0xF0000000",
+                "value": 1
+            },
+            {
+                "name": "Service / Test Mode",
+                "id": 1,
+                "type": "check",
+                "enabled": true,
+                "persist": false,
+                "writeonly": true,
+                "address": "0xF0000004",
+                "value": 1,
+                "defaultval": 0
+            },
+            {
+                "name": "Difficulty",
+                "id": 2,
+                "type": "list",
+                "enabled": true,
+                "persist": true,
+                "writeonly": true,
+                "address": "0xF0000010",
+                "options": [
+                    { "name": "Default", "value": 0 },
+                    { "name": "Easy", "value": 1 },
+                    { "name": "Normal", "value": 2 },
+                    { "name": "Hard", "value": 3 },
+                    { "name": "Hardest", "value": 4 }
+                ],
+                "defaultval": 0
+            },
+            {
+                "name": "Lives",
+                "id": 3,
+                "type": "list",
+                "enabled": true,
+                "persist": true,
+                "writeonly": true,
+                "address": "0xF0000014",
+                "options": [
+                    { "name": "Default", "value": 0 },
+                    { "name": "1", "value": 1 },
+                    { "name": "2", "value": 2 },
+                    { "name": "3", "value": 3 },
+                    { "name": "4", "value": 4 }
+                ],
+                "defaultval": 0
+            },
+            {
+                "name": "Demo Sounds",
+                "id": 4,
+                "type": "list",
+                "enabled": true,
+                "persist": true,
+                "writeonly": true,
+                "address": "0xF0000018",
+                "options": [
+                    { "name": "Default", "value": 0 },
+                    { "name": "Off", "value": 1 },
+                    { "name": "On", "value": 2 }
+                ],
+                "defaultval": 0
+            },
+            {
+                "name": "Audio Volume",
+                "id": 5,
+                "type": "list",
+                "enabled": true,
+                "persist": true,
+                "writeonly": true,
+                "address": "0xF0000008",
+                "options": [
+                    { "name": "1x", "value": 0 },
+                    { "name": "2x (Default)", "value": 1 },
+                    { "name": "4x", "value": 2 }
+                ],
+                "defaultval": 1
+            }
+        ],
+        "messages": null
+    }
+}
