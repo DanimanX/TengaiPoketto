@@ -200,7 +200,20 @@ testbenches (section 10).
 |---|---|---|
 | core only, upstream SDC | −2.302 ns | OPL4 `ch_tl` interpolation, sprite list bbox |
 | full Pocket, OPL4 + bbox not yet fixed | −1.814 ns | sprite list bbox, jt12 `phinc_II`, sprite engine `fb_*`, OPL4 PCM |
-| full Pocket, all fixes below | pending | — |
+| full Pocket, + sprite engine, jt12 shadows | −1.332 ns | OPL4 PCM, ADPCM-A cache, jt12 `u_phsh` |
+| full Pocket, + ADPCM-A cache, OPL4 multicycles | −0.214 ns | OPL4 header address (6 paths) |
+| full Pocket, + `S_HDR_HI` | +0.130 ns at 85 °C, −0.103 ns at 0 °C | OPL4 `c_vib` → `w_step` |
+| **full Pocket, + `c_vib` multicycle (release build)** | **+0.201 ns setup / +0.071 ns hold, worst of all 4 corners** | none |
+
+Release build: 13,962 ALMs (76 %), 159/308 M10K (52 %), 29 DSP, 224/224 pins. Every clock
+meets setup, hold, recovery, removal and minimum pulse width in all four corners (slow/fast,
+0 °C/85 °C).
+
+Multicycle exceptions added in `src/fpga/core/core_constraints.sdc` are each audited in a
+comment: the source is written in a state that comes at least 2 clocks before the only state that
+writes the destination. They cover the jt12 `phinc_II` sources and `u_phsh`, plus the OPL4 PCM
+pipeline registers `p_eg_inc`/`p_rate`/`p_frac_zero`, `p_env_next`, `p_lvol`, `ch_nextpos` and
+`w_step` (`c_vib`).
 
 Fixes applied in the vendored RTL (`src/fpga/rtl`, the pristine copy is in `upstream/`):
 - `opl4_pcm.sv`: the channel TL is registered in `S_CALC` (`w_tl`), so the `S_ENV2` interpolation
@@ -210,6 +223,11 @@ Fixes applied in the vendored RTL (`src/fpga/rtl`, the pristine copy is in `upst
 - `sprite_line_engine.sv`: the column emit is split into two stages. Stage A computes the zoom
   source index; stage B does the pixel mux and transparency test. `busy` stays high until the
   last write lands.
+- `adpcma_sample_cache.sv`: the per-entry tag compares are registered, and a new `S_CMP` state
+  makes the decision one clock later. That costs one clock per demand fetch, against a deadline of
+  118 clocks.
+- `opl4_pcm.sv` `S_HDR_HI`: reads the wave-number high bit one clock before the ×12/bank header
+  address math. This only happens on key-on.
 - `jt12_mmr.v`: the CH3 effect-mode registers are shadowed on `clk_en`. Together with
   `jt12_reg_ch`'s outputs, this lets the existing jt12 multicycle cover every `phinc_II` source.
 
@@ -258,10 +276,10 @@ Player 2 maps from a second docked controller (`cont2_key`).
 
 ## 9. Work plan
 
-1. **Timing closure at 85.9 MHz on C8.** Use the upstream SDC multicycles (68020, Z80, jt12,
+1. **Timing closure at 85.9 MHz on C8: done** (section 6). Use the upstream SDC multicycles (68020, Z80, jt12,
    OPL4 PCM, palette path), then pipeline any path still failing. Fallback: run `clk_sys` lower
    and rescale the Bresenham constants (they are all parameters of one denominator).
-2. **SRAM work RAM** (`EXT_WORKRAM`), with a BIST at boot as in SpaceFish.
+2. **SRAM work RAM** (`EXT_WORKRAM`): done (`psk_sram.sv`, verified by `sim/sram_tb`). A boot BIST as in SpaceFish is still to do.
 3. **Pocket top** `psikyo_pocket_top.sv`: PLL, `pk_io`, SDRAM pins, SRAM, video (RGB555→RGB888,
    DE/HS/VS, scaler slot per game), audio resampler, inputs.
 4. **APF metadata**: platform `psikyo`, core `danimanx.TengaiPoketto`, one instance JSON per
@@ -279,6 +297,7 @@ Player 2 maps from a second docked controller (`cont2_key`).
 |---|---|---|
 | `sprite_line_diff` | upstream | per-scanline sprite path, compared pixel by pixel with the frame-buffer reference renderer (10 scenes) |
 | `opl4` | upstream | YMF278B PCM: bus, timers, wavetable headers, key-on/off, looping |
+| `adpcma_sample_cache` | upstream | ADPCM-A/OPL4 granule cache over the real SDRAM controller + chip model, held and pulsed clients |
 | `pk_io_psk` | Pocket | `.rom` streamed over a modelled APF bridge into the fast-loader port, MCU table, DIPs, rotation byte |
 | `psk_sram` | Pocket | work RAM controller against a 10 ns async SRAM model, 20 000 random byte/word accesses, bus contention |
 

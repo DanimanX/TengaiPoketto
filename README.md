@@ -6,7 +6,7 @@
 
 An openFPGA port of the **Psikyo 68k arcade system** (1993–1996) for the **Analogue Pocket**, based on [`ppriest/Arcade-Psikyo_MiSTer`](https://github.com/ppriest/Arcade-Psikyo_MiSTer).
 
-> **Status: work in progress.** The port is in the design / bring-up phase. No bitstream has been released yet.
+> **Status: v0.1.0, untested on hardware.** The full Pocket build meets timing at 85.909 MHz in every corner and the Verilator suite (`sim/run_tests.sh`) passes. The next step is hardware bring-up, starting with Tengai.
 
 ## Target games
 
@@ -38,6 +38,11 @@ flowchart LR
 - **No framebuffer:** sprites are rendered per scanline and vertical games are rotated by the Pocket scaler.
 
 See [`PORTING.md`](PORTING.md) for the full diagram, the hardware mapping (MiSTer → Analogue Pocket), the measured FPGA resource budget and the clocking plan.
+
+## Installing
+
+1. Build the package with `python3 tools/package_pocket.py`, then extract `release/TengaiPoketto_Pocket_v0.1.0.zip` to the root of the SD card.
+2. Build the `.rom` files (below) and copy them to `Assets/psikyo/common/`.
 
 ## Building ROMs
 

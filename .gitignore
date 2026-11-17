@@ -24,3 +24,4 @@ banner_raw.jpg
 roms/*
 !roms/README.md
 docs/banner_raw.webp
+release/
