@@ -38,4 +38,11 @@ else
     echo "FAIL (see $out/pk_io.log)"; fail=1
 fi
 
+printf '%-24s ' psk_sram
+if "$here/sram_tb/run.sh" >"$out/sram.log" 2>&1 && grep -q 'ALL PASS' "$out/sram.log"; then
+    echo PASS
+else
+    echo "FAIL (see $out/sram.log)"; fail=1
+fi
+
 exit $fail

@@ -42,12 +42,12 @@ module psikyo_pocket_top (
 	output wire        dram_cas_n,
 	output wire        dram_we_n,
 
-	output reg  [16:0] sram_a = 17'd0,
+	output wire [16:0] sram_a,
 	inout  wire [15:0] sram_dq,
-	output reg         sram_oe_n = 1'b1,
-	output reg         sram_we_n = 1'b1,
-	output reg         sram_ub_n = 1'b1,
-	output reg         sram_lb_n = 1'b1,
+	output wire        sram_oe_n,
+	output wire        sram_we_n,
+	output wire        sram_ub_n,
+	output wire        sram_lb_n,
 
 	output wire        boot_done,
 	output wire        pll_locked_o
@@ -176,7 +176,7 @@ module psikyo_pocket_top (
 	// ---------------------------------------------------------------------
 	wire [15:0] wr_addr, wr_wdata;
 	wire        wr_wel, wr_weh;
-	reg  [15:0] wr_rdata = 16'd0;
+	wire [15:0] wr_rdata;
 	wire signed [15:0] snd_left, snd_right;
 	wire        ioctl_wait_unused, ldr_busy_core;
 
@@ -222,38 +222,13 @@ module psikyo_pocket_top (
 	//    leave from the IOE; WE# is asserted the cycle AFTER the address is
 	//    on the pins and released before it can change.
 	// ---------------------------------------------------------------------
-	reg  [15:0] sram_dout = 16'd0;
-	reg         sram_drive = 1'b0;
-	reg  [1:0]  wr_phase = 2'd0;
-	assign sram_dq = sram_drive ? sram_dout : 16'hzzzz;
-
-	always @(posedge clk_sys) begin
-		sram_a    <= {1'b0, wr_addr};   // address on the pins from ph1 on
-		wr_rdata  <= sram_dq;           // registered input, read at ph3
-		case (wr_phase)
-			2'd0: begin
-				sram_we_n  <= 1'b1;
-				sram_oe_n  <= 1'b0;
-				sram_ub_n  <= 1'b0;
-				sram_lb_n  <= 1'b0;
-				sram_drive <= 1'b0;
-				// wel/weh pulse at ph1: the address has been on the pins for
-				// a cycle already; WE# low for one clk (11.6 ns), data driven
-				// for two, and the address cannot change before ph3.
-				if (wr_wel | wr_weh) begin
-					sram_oe_n  <= 1'b1;
-					sram_we_n  <= 1'b0;
-					sram_drive <= 1'b1;
-					sram_dout  <= wr_wdata;
-					sram_ub_n  <= ~wr_weh;
-					sram_lb_n  <= ~wr_wel;
-					wr_phase   <= 2'd1;
-				end
-			end
-			2'd1: begin sram_we_n <= 1'b1; wr_phase <= 2'd2; end
-			default: begin wr_phase <= 2'd0; end   // data hold one more clk
-		endcase
-	end
+	psk_sram u_sram (
+		.clk(clk_sys),
+		.wr_addr(wr_addr), .wr_wel(wr_wel), .wr_weh(wr_weh),
+		.wr_wdata(wr_wdata), .wr_rdata(wr_rdata),
+		.sram_a(sram_a), .sram_dq(sram_dq), .sram_oe_n(sram_oe_n),
+		.sram_we_n(sram_we_n), .sram_ub_n(sram_ub_n), .sram_lb_n(sram_lb_n)
+	);
 
 	// ---------------------------------------------------------------------
 	// 6. Video -> APF

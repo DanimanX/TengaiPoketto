@@ -137,5 +137,6 @@ set_global_assignment -name SYSTEMVERILOG_FILE [file join $::quartus(qip_path) c
 set_global_assignment -name SYSTEMVERILOG_FILE [file join $::quartus(qip_path) core/sync_fifo.sv ]
 set_global_assignment -name SYSTEMVERILOG_FILE [file join $::quartus(qip_path) pocket_rtl/psk_pll.sv ]
 set_global_assignment -name SYSTEMVERILOG_FILE [file join $::quartus(qip_path) pocket_rtl/psk_audio_pll.sv ]
+set_global_assignment -name SYSTEMVERILOG_FILE [file join $::quartus(qip_path) pocket_rtl/psk_sram.sv ]
 set_global_assignment -name SYSTEMVERILOG_FILE [file join $::quartus(qip_path) pocket_rtl/pk_io_psk.sv ]
 set_global_assignment -name SYSTEMVERILOG_FILE [file join $::quartus(qip_path) pocket_rtl/psikyo_pocket_top.sv ]
