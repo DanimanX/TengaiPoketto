@@ -102,7 +102,13 @@ localparam STATE_READ0  = STATE_CONT+CAS_LATENCY+4'd1;   // +1: matches upstream
 localparam STATE_READ1  = STATE_READ0+4'd1;
 localparam STATE_READ2  = STATE_READ0+4'd2;
 localparam STATE_READ3  = STATE_READ0+4'd3;
-localparam STATE_LAST   = STATE_READ3;         // last state in cycle
+// Pocket port: the four lanes are taken from dq_in, a plain every-clock
+// register on the pins that Quartus packs into the IOE input register (as
+// SpaceFish's rf_sdram does with dq_reg). The pins are still SAMPLED at the
+// end of STATE_READ0..READ3 -- the same instants as upstream -- but each lane
+// is copied out of dq_in one clk later, so the cycle gains one state.
+localparam STATE_DONE   = STATE_READ3+4'd1;
+localparam STATE_LAST   = STATE_DONE;          // last state in cycle
 
 reg  [3:0] state = 4'd0;   // upstream relies on Quartus's zero-power-up default for
                             // FPGA registers (real hardware); explicit here since plain
@@ -113,6 +119,10 @@ reg [22:1] a;
 reg [15:0] data;
 reg        we;
 reg  [1:0] ba = 0;
+// IOE input register (FAST_INPUT_REGISTER on dram_dq in the .qsf): no
+// enable, no reset, single destination per pin.
+reg  [15:0] dq_in;
+always @(posedge clk) dq_in <= SDRAM_DQ;
 reg  [1:0] dqm;
 reg        active = 0;
 reg  [2:0] ram_req = 0;
@@ -221,11 +231,11 @@ always @(posedge clk) begin
 	// lowest address = dout[15:0]) matching ACCESS_TYPE=sequential above.
 	// Write completion (ack, no data capture) shares STATE_READ3 for a
 	// single uniform completion point -- see PROVENANCE.md for why.
-	if (state == STATE_READ0 && ram_req && !we) dout[15:0]  <= SDRAM_DQ;
-	if (state == STATE_READ1 && ram_req && !we) dout[31:16] <= SDRAM_DQ;
-	if (state == STATE_READ2 && ram_req && !we) dout[47:32] <= SDRAM_DQ;
-	if (state == STATE_READ3 && ram_req) begin
-		if (!we) dout[63:48] <= SDRAM_DQ;
+	if (state == STATE_READ1 && ram_req && !we) dout[15:0]  <= dq_in;   // pin @ end of READ0
+	if (state == STATE_READ2 && ram_req && !we) dout[31:16] <= dq_in;   // pin @ end of READ1
+	if (state == STATE_READ3 && ram_req && !we) dout[47:32] <= dq_in;   // pin @ end of READ2
+	if (state == STATE_DONE && ram_req) begin
+		if (!we) dout[63:48] <= dq_in;                                  // pin @ end of READ3
 		active <= 0;
 		ram_req <= 0;
 		if (ram_req[0]) ack0 <= req0;

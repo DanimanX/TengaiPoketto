@@ -19,7 +19,7 @@ run() {  # name top sources...
     fi
     # opl4_pcm loads its table from rtl/sound/opl4/..., relative to the cwd
     if (cd "$R/.." && "$out/$name/V$top") >"$out/$name.log" 2>&1 \
-       && grep -qE 'ALL (TESTS )?PASS|^PASS: adpcma_sample_cache' "$out/$name.log"; then
+       && grep -qE 'ALL (TESTS )?PASS|^PASS: (adpcma_sample_cache|sprite_render_engine renders)|^PASS: tb_sdram' "$out/$name.log" && ! grep -q FAIL "$out/$name.log"; then
         echo "PASS"
     else
         echo "FAIL (see $out/$name.log)"; fail=1
@@ -29,6 +29,13 @@ run() {  # name top sources...
 run sprite_line_diff tb_sprite_line_diff \
     "$R/memory/dpram.sv" "$R"/video/sprite_*.sv "$R/video/tile_row_decode.sv" \
     "$R/memory/sdram_narrow_bridge.sv" "$U/sprite_line_tb/tb_sprite_line_diff.sv"
+SD="$R/memory/sdram/sdram.sv $R/memory/sdram_phy.sv $(find "$R/memory" -name '*.sv' ! -path '*/sdram/sdram.sv' ! -name sdram_phy.sv) $R/sound/adpcma_sample_cache.sv $R/video/*.sv $U/sdram_tb/sdram_chip_model.sv"
+# shellcheck disable=SC2086
+run sdram tb_sdram $SD "$U/sdram_tb/tb_sdram.sv"
+# shellcheck disable=SC2086
+run psikyo_sdram_top tb_psikyo_sdram_top $SD "$U/psikyo_sdram_top_tb/tb_psikyo_sdram_top.sv"
+# shellcheck disable=SC2086
+run port2_sdram tb_port2_sdram $SD "$U/port2_sdram_tb/tb_port2_sdram.sv"
 run opl4 tb_opl4 "$R"/sound/opl4/*.sv "$U/opl4_tb/tb_opl4.sv"
 run adpcma_sample_cache tb_adpcma_sample_cache "$R/sound/adpcma_sample_cache.sv" \
     "$R/memory/sdram/sdram.sv" "$R/memory/sdram_phy.sv" \
