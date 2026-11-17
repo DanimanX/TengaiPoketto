@@ -1,6 +1,7 @@
 #!/bin/sh
-# Run the upstream Psikyo testbenches that cover modules patched for the
-# Pocket (src/fpga/rtl) with Verilator. Usage: sim/run_upstream_tests.sh
+# Run the Verilator test suite: the upstream Psikyo testbenches covering the
+# modules patched for the Pocket (src/fpga/rtl), plus the Pocket loader test.
+# Usage: sim/run_tests.sh
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 R="$here/../src/fpga/rtl"
@@ -29,5 +30,12 @@ run sprite_line_diff tb_sprite_line_diff \
     "$R/memory/dpram.sv" "$R"/video/sprite_*.sv "$R/video/tile_row_decode.sv" \
     "$R/memory/sdram_narrow_bridge.sv" "$U/sprite_line_tb/tb_sprite_line_diff.sv"
 run opl4 tb_opl4 "$R"/sound/opl4/*.sv "$U/opl4_tb/tb_opl4.sv"
+
+printf '%-24s ' pk_io_psk
+if "$here/pk_io_tb/run.sh" >"$out/pk_io.log" 2>&1 && grep -q 'ALL PASS' "$out/pk_io.log"; then
+    echo PASS
+else
+    echo "FAIL (see $out/pk_io.log)"; fail=1
+fi
 
 exit $fail
