@@ -39,6 +39,19 @@ compiled by Quartus 25.1 Lite for `5CEBA4F23C8`:
 Logic fits with ~5k ALMs to spare for the APF bridge, loader and audio path. Block RAM does not
 leave enough room, so the largest RAM moves off-chip (section 5).
 
+**Full Pocket build** (core + APF shell + loader + SRAM work RAM + audio, first compile of
+`src/fpga/pocket_tengai.qpf`):
+
+| Resource | Used | Pocket total |
+|---|---|---|
+| ALMs | 13,887 (75 %) | 18,480 |
+| M10K blocks | 159 (52 %) | 308 |
+| DSP blocks | 29 (44 %) | 66 |
+| Pins | 224 (100 %) | 224 |
+
+Moving the work RAM to SRAM brought block RAM from 93 % to 52 %, which leaves room for later
+additions such as hiscore saves.
+
 M10K breakdown (top consumers):
 
 | RAM | Size | M10K |
@@ -180,6 +193,26 @@ So no divider constant in the upstream RTL changes. Audio uses a separate PLL fo
 slack. The Pocket part is speed grade 8 (≈10–15 % slower), so the critical paths must be
 reworked (see section 9).
 
+Timing closure status on C8 (slow 85 °C model). Each fix below is checked against the upstream
+testbenches (section 10).
+
+| Build | clk_sys WNS | Failing groups |
+|---|---|---|
+| core only, upstream SDC | −2.302 ns | OPL4 `ch_tl` interpolation, sprite list bbox |
+| full Pocket, OPL4 + bbox not yet fixed | −1.814 ns | sprite list bbox, jt12 `phinc_II`, sprite engine `fb_*`, OPL4 PCM |
+| full Pocket, all fixes below | pending | — |
+
+Fixes applied in the vendored RTL (`src/fpga/rtl`, the pristine copy is in `upstream/`):
+- `opl4_pcm.sv`: the channel TL is registered in `S_CALC` (`w_tl`), so the `S_ENV2` interpolation
+  starts from a register instead of the channel-RAM mux.
+- `sprite_line_list.sv`: new `S_BOX` state. The visible/bounding-box test runs on registered
+  `y_adj`/`span`.
+- `sprite_line_engine.sv`: the column emit is split into two stages. Stage A computes the zoom
+  source index; stage B does the pixel mux and transparency test. `busy` stays high until the
+  last write lands.
+- `jt12_mmr.v`: the CH3 effect-mode registers are shadowed on `clk_en`. Together with
+  `jt12_reg_ch`'s outputs, this lets the existing jt12 multicycle cover every `phinc_II` source.
+
 ---
 
 ## 7. ROM format (`.rom`)
@@ -235,3 +268,20 @@ Player 2 maps from a second docked controller (`cont2_key`).
    game, `video.json` with horizontal and rotated modes.
 5. **Hardware bring-up**: Tengai first (SH404: MCU + OPL4 + gfx banking, the hardest board), then
    Strikers 1945, Gunbird, Battle K-Road and Samurai Aces.
+
+---
+
+## 10. Verification
+
+`sim/run_tests.sh` runs Verilator 5.x, which is free and needs no license, on:
+
+| Suite | Source | Checks |
+|---|---|---|
+| `sprite_line_diff` | upstream | per-scanline sprite path, compared pixel by pixel with the frame-buffer reference renderer (10 scenes) |
+| `opl4` | upstream | YMF278B PCM: bus, timers, wavetable headers, key-on/off, looping |
+| `pk_io_psk` | Pocket | `.rom` streamed over a modelled APF bridge into the fast-loader port, MCU table, DIPs, rotation byte |
+| `psk_sram` | Pocket | work RAM controller against a 10 ns async SRAM model, 20 000 random byte/word accesses, bus contention |
+
+The `psk_sram` suite caught a real bug: the byte lanes were released at the WE# rising edge.
+Putting that variant back makes the suite report 3 081 errors.
+
