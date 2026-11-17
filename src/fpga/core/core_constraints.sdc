@@ -245,8 +245,14 @@ set pansrc [get_registers {*|opl4_pcm:u_pcm|c_pan[*]}]
 # w_step (written in S_ENV2) stays a full-rate source.
 set possrc [get_registers {*|opl4_pcm:u_pcm|w_curpos[*] *|opl4_pcm:u_pcm|c_end[*] *|opl4_pcm:u_pcm|c_loop[*]}]
 set posdst [get_registers {*|opl4_pcm:u_pcm|ch_nextpos[*]}]
+# c_vib is written ONLY in S_RD5; its only use is pm_depth_f -> pm_add ->
+# w_step, written ONLY in S_ENV2 (S_RD5 .. S_ENV2 = 6 edges). p_pm_val, the
+# other multiplicand (written in S_ENV), stays a full-rate source.
+# (Found failing by -0.103 ns at the slow 0 C corner only.)
+set vibsrc [get_registers {*|opl4_pcm:u_pcm|c_vib[*]}]
+set vibdst [get_registers {*|opl4_pcm:u_pcm|w_step[*]}]
 set pandst [get_registers {*|opl4_pcm:u_pcm|p_lvol[*] *|opl4_pcm:u_pcm|p_rvol[*]}]
-foreach {src dst nm} [list $envsrc $envdst env2 $pansrc $pandst pan $possrc $posdst pos] {
+foreach {src dst nm} [list $envsrc $envdst env2 $pansrc $pandst pan $possrc $posdst pos $vibsrc $vibdst vib] {
     if {[get_collection_size $src] > 0 && [get_collection_size $dst] > 0} {
         set_multicycle_path -setup -end 2 -from $src -to $dst
         set_multicycle_path -hold  -end 1 -from $src -to $dst
