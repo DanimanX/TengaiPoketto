@@ -25,3 +25,6 @@ roms/*
 !roms/README.md
 docs/banner_raw.webp
 release/
+
+# Quartus pin-model dump
+c5_pin_model_dump.txt
