@@ -187,6 +187,7 @@ module opl4_pcm (
 	// slot working values
 	logic [31:0] w_step, w_curpos;
 	logic [9:0]  w_env;
+	logic [16:0] w_tl;    // Pocket: ch_tl[ch] registered in S_CALC (timing, C8 part)
 	logic [2:0]  w_state_eg;
 	logic [17:0] w_lfo;
 	logic signed [15:0] w_sample;
@@ -530,6 +531,7 @@ module opl4_pcm (
 					c_amd     <= pcm_rdata[2:0];
 					w_lfo      <= lfo_upd;
 					w_env      <= ch_env[ch];
+					w_tl       <= ch_tl[ch];
 					w_state_eg <= ch_eg_state[ch];
 					// attack->decay / decay->sustain transitions (pre-rate)
 					if (ch_eg_state[ch] == EG_ATTACK && ch_env[ch] == 10'd0)
@@ -602,13 +604,15 @@ module opl4_pcm (
 					// chain it was meant to relieve.
 					w_step          <= step_exact + 32'($signed(pm_add));
 					// total level interpolation (19 up / 38 down per sample)
+					// (reads w_tl, the S_CALC copy of ch_tl[ch]: nothing writes
+					//  ch_tl between S_CALC and here, so the result is identical)
 					if (c_lvl_direct) ch_tl[ch] <= {c_tl_reg, 10'd0};
-					else if (ch_tl[ch] < {c_tl_reg, 10'd0})
-						ch_tl[ch] <= ((ch_tl[ch] + 17'd19) > {c_tl_reg, 10'd0})
-						            ? {c_tl_reg, 10'd0} : ch_tl[ch] + 17'd19;
-					else if (ch_tl[ch] > {c_tl_reg, 10'd0})
-						ch_tl[ch] <= ((ch_tl[ch] - 17'd38) < {c_tl_reg, 10'd0})
-						            ? {c_tl_reg, 10'd0} : ch_tl[ch] - 17'd38;
+					else if (w_tl < {c_tl_reg, 10'd0})
+						ch_tl[ch] <= ((w_tl + 17'd19) > {c_tl_reg, 10'd0})
+						            ? {c_tl_reg, 10'd0} : w_tl + 17'd19;
+					else if (w_tl > {c_tl_reg, 10'd0})
+						ch_tl[ch] <= ((w_tl - 17'd38) < {c_tl_reg, 10'd0})
+						            ? {c_tl_reg, 10'd0} : w_tl - 17'd38;
 					// The fetch address is computed unconditionally. It depends
 					// only on w_curpos and ch_baseaddr[ch], both stable here,
 					// whereas the quiet test (now in S_ENV3) sits at the far end of the

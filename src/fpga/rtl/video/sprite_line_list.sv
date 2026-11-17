@@ -127,12 +127,17 @@ module sprite_line_list (
 	assign span_y_c = 8'((({4'd0, rd_ny - 4'd1} * {2'd0, pt_zoom_y_t}) >> 1) + {3'd0, zl_dst_size_y});
 	assign span_x_c = 9'((({4'd0, rd_nx - 4'd1} * {2'd0, pt_zoom_x_t}) >> 1) + {4'd0, zl_dst_size_x});
 
-	logic signed [10:0] y_bot_c, x_rgt_c;
-	assign y_bot_c = $signed({pt_y_adj[9], pt_y_adj}) + $signed({3'd0, span_y_c});
-	assign x_rgt_c = $signed({pt_x_adj[9], pt_x_adj}) + $signed({2'd0, span_x_c});
 
-	wire box_visible = (y_bot_c > 0) && ($signed({pt_y_adj[9], pt_y_adj}) < 11'sd224)
-	                 && (x_rgt_c > 0) && ($signed({pt_x_adj[9], pt_x_adj}) < 11'sd320);
+	// Pocket port: the decode -> transform -> multiply -> add chain is
+	// registered (S_FETCH) before the box compares (S_BOX); in one clock it
+	// missed 85.9 MHz on the Pocket's C8 part by ~2.3 ns.
+	logic signed [9:0] r_y_adj, r_x_adj;
+	logic [7:0]        r_span_y;
+	logic [8:0]        r_span_x;
+	wire signed [10:0] r_y_bot = $signed({r_y_adj[9], r_y_adj}) + $signed({3'd0, r_span_y});
+	wire signed [10:0] r_x_rgt = $signed({r_x_adj[9], r_x_adj}) + $signed({2'd0, r_span_x});
+	wire box_visible = (r_y_bot > 0) && ($signed({r_y_adj[9], r_y_adj}) < 11'sd224)
+	                 && (r_x_rgt > 0) && ($signed({r_x_adj[9], r_x_adj}) < 11'sd320);
 
 	// ---- table RAMs ----
 	logic [17:0] ytest_ram [0:1023];
@@ -156,7 +161,7 @@ module sprite_line_list (
 	// ---- build FSM ----
 	// One registered stage between record_valid and the table write keeps
 	// the whole decode chain out of the RAM-write timing path.
-	typedef enum logic [1:0] {S_IDLE, S_WALK, S_FETCH, S_STORE} state_t;
+	typedef enum logic [2:0] {S_IDLE, S_WALK, S_FETCH, S_BOX, S_STORE} state_t;
 	state_t state;
 
 	assign build_busy = (state != S_IDLE);
@@ -204,11 +209,19 @@ module sprite_line_list (
 					if (rf_record_valid) begin
 						// decode chain settles from the just-latched rf_word_*
 						// registers during this cycle; capture its verdict
-						wr_ytest <= {pt_y_adj, span_y_c};
+						r_y_adj  <= pt_y_adj;
+						r_x_adj  <= pt_x_adj;
+						r_span_y <= span_y_c;
+						r_span_x <= span_x_c;
 						wr_rec    <= {rf_word_y, rf_word_x, rf_word_attr, rf_word_code_lo};
-						wr_en     <= box_visible;
-						state      <= S_STORE;
+						state      <= S_BOX;
 					end
+				end
+
+				S_BOX: begin
+					wr_ytest <= {r_y_adj, r_span_y};
+					wr_en    <= box_visible;
+					state    <= S_STORE;
 				end
 
 				S_STORE: begin
