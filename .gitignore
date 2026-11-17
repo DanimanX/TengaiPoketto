@@ -1,0 +1,26 @@
+# Quartus build products
+build/
+db/
+incremental_db/
+output_files/
+*.rpt
+*.summary
+*.smsg
+*.pin
+*.qws
+*.sof
+*.jdi
+*.done
+*.log
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Raw sources / temp
+banner_raw.jpg
+
+# ROM files
+roms/*
+!roms/README.md
+docs/banner_raw.webp

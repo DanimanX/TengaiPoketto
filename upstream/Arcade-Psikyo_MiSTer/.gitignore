@@ -1,0 +1,122 @@
+db
+greybox_tmp
+incremental_db
+output_files
+simulation
+hc_output
+scaler
+hps_isw_handoff
+vip
+*_sim
+.qsys_edit
+PLLJ_PLLSPE_INFO.txt
+*.bak
+*.orig
+*.rej
+*.qdf
+*.rpt
+*.smsg
+*.summary
+*.done
+*.jdi
+*.pin
+*.sof
+*.qws
+*.ppf
+*.ddb
+build_id.v
+c5_pin_model_dump.txt
+*.sopcinfo
+*.csv
+*.f
+*.cmp
+*.sip
+*.spd
+*.bsf
+*~
+*.xml
+*_netlist
+*.cdf
+**/.DS_Store
+
+# ModelSim
+work/
+transcript
+vsim.wlf
+modelsim.ini
+sim/**/*.log
+
+# Local build/debug scratch: Quartus run logs and hardware screenshots pulled
+# back by scripts/mister_hw_test.py during bring-up. Regenerable, and the
+# screenshots are only meaningful alongside the temporary debug build that
+# produced them.
+quartus_*.log
+q_*.log
+scratch_*.png
+
+# Staged-build worktree (scripts/build_staged.py): every build compiles a
+# snapshot of HEAD here, so Quartus scratch (db/, output_files/, logs) stays
+# out of the repo root and the main tree stays editable mid-build.
+build/
+
+# Local MiSTer connection settings (host/user/password) for
+# scripts/mister_hw_test.py -- never committed, see the file's own header.
+mister.env
+
+# ModelSim crash dumps.
+*.vstf
+
+# Decoded debug-tap captures and other local analysis scratch.
+scratch_*.txt
+
+# releases/ IS the right home for built bitstreams -- they just aren't
+# tracked for now, while the core still doesn't run the games. Only a build
+# VERIFIED to actually run belongs in git: committing one that merely
+# compiles is actively misleading (one such build was committed and had to
+# be removed -- it predated the timing-closure fix and did not run at all).
+# When there is a verified build worth publishing, add it deliberately:
+#   git add -f "releases/<name>.rbf"
+releases/*.rbf
+
+# vasm: NOT vendored (license is non-commercial/no-modification
+# redistribution, see tools/README.md) -- built locally on demand by
+# scripts/fetch_build_vasm.sh instead. Assembled test-program outputs are
+# regenerable build artifacts, not source; the .s files are what's tracked.
+tools/vasm/
+sim/**/*.bin
+sim/**/*.lst
+sim/**/*.hex
+
+# Copyrighted MAME ROM dumps used for local bring-up/verification -- never
+# committed, regardless of subdirectory.
+roms/
+
+# Ad-hoc hardware capture scratch. Screenshots pulled off the MiSTer and their
+# decoded traces pile up fast during bring-up -- entirely local working
+# material, never committed. scripts/decode_trace.py writes every decode to
+# debug/captures/ keyed by capture type and settings, so those persist locally
+# as a comparison record without entering the repo.
+/*.png
+/*.txt
+debug/
+
+# Quartus STA scratch logs
+sta*.log
+worst_*.rpt
+
+# scratch CFG written by the deploy/test scripts
+cfg.bin
+__pycache__/
+*.pyc
+
+# Simulation output data -- decoded channel dumps, raw audio, screen dumps.
+sim/**/*.raw
+sim/**/*.dec
+sim/**/*dump*.txt
+
+# user-local rom sync helper, not part of the release set
+releases/sync-mame-roms.sh
+build_keep/
+
+# stray capture written when read_audio.tcl is run with the literal usage example
+outfile.bin
