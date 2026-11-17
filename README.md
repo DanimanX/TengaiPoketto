@@ -18,9 +18,32 @@ An openFPGA port of the **Psikyo 68k arcade system** (1993–1996) for the **Ana
 | Strikers 1945 | `s1945` | SH403 / SH404 | YM2610 / YMF278B |
 | Tengai / Sengoku Blade | `tengai`, `sngkblade` | SH404 | YMF278B (OPL4) |
 
-## Porting plan
+## How it fits on the Pocket
 
-See [`PORTING.md`](PORTING.md) for the hardware mapping (MiSTer → Analogue Pocket), the FPGA resource budget and the clocking plan.
+```mermaid
+flowchart LR
+    ROM[".rom (SD card)"] --> PKIO["pk_io_psk<br/>loader + pads + menu"]
+    PKIO -->|fast-loader port| SDC["SDRAM controller"]
+    SDC <--> DRAM[("SDRAM 64 MB<br/>ROMs, gfx, samples")]
+    CPU["68EC020 (TG68K)"] <--> SRAM[("SRAM 256 KB<br/>work RAM")]
+    CPU <--> SDC
+    CPU --> SND["Z80 + YM2610 / OPL4"] --> I2S["48 kHz I2S"]
+    CPU <--> VID["tilemaps + per-line sprites"] <--> SDC
+    VID --> SCL["Pocket scaler<br/>rotates vertical games"]
+    PLL["PLL: 74.25 MHz x 140/11<br/>= 945 MHz VCO"] -.-> CPU
+```
+
+- **Clock:** 945/11 = 85.909 MHz, exactly the MiSTer `clk_sys`, so every upstream clock divider is unchanged.
+- **Block RAM:** the 128 KB 68020 work RAM moves to the Pocket's async SRAM, freeing 128 of the 308 M10K blocks.
+- **No framebuffer:** sprites are rendered per scanline and vertical games are rotated by the Pocket scaler.
+
+See [`PORTING.md`](PORTING.md) for the full diagram, the hardware mapping (MiSTer → Analogue Pocket), the measured FPGA resource budget and the clocking plan.
+
+## Building ROMs
+
+```bash
+python3 tools/build_rom.py --all upstream/Arcade-Psikyo_MiSTer/releases /path/to/mame/zips roms/
+```
 
 ## License & Credits
 

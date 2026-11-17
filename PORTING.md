@@ -37,7 +37,7 @@ compiled by Quartus 25.1 Lite for `5CEBA4F23C8`:
 | DSP blocks | 29 (44 %) | 66 |
 
 Logic fits with ~5k ALMs to spare for the APF bridge, loader and audio path. Block RAM does not
-leave enough room, so the largest RAM moves off-chip (section 4).
+leave enough room, so the largest RAM moves off-chip (section 5).
 
 M10K breakdown (top consumers):
 
@@ -53,7 +53,60 @@ M10K breakdown (top consumers):
 
 ---
 
-## 3. MiSTer → Pocket mapping
+## 3. Solution architecture
+
+```mermaid
+flowchart LR
+    subgraph APF["Analogue Pocket (APF, clk_74a)"]
+        SD[".rom on SD card<br/>PSK header + SDRAM image"]
+        PAD["cont1/cont2 pads"]
+        MENU["interact.json menu<br/>reset, service, difficulty,<br/>lives, demo, volume"]
+    end
+
+    subgraph SHELL["Pocket shell (src/fpga/pocket_rtl)"]
+        PLL["psk_pll<br/>74.25 x 140/11 = 945 MHz VCO<br/>clk_sys 85.909 / clk_pix 7.159"]
+        PKIO["pk_io_psk<br/>2048x57 dcfifo, header parser,<br/>board flags, MCU table, DIPs,<br/>rotation, pad mapping"]
+        SRAMC["SRAM controller<br/>registered I/O, WE# pulse"]
+        VID["video out<br/>RGB555 to RGB888, DE/HS/VS,<br/>scaler slot 0 / 1 (rot 270)"]
+        AUD["audio<br/>48 kHz hold, volume,<br/>sound_i2s"]
+    end
+
+    subgraph CORE["psikyo_top (upstream, src/fpga/rtl)"]
+        CPU["maincpu<br/>TG68K 68EC020 16 MHz<br/>EXT_WORKRAM"]
+        SND["sound_cpu Z80 4 MHz<br/>jt10 YM2610 / OPL4 YMF278B"]
+        MCU["s1945_mcu<br/>SH403/SH404"]
+        VIDEO["2 tilemaps + per-scanline<br/>sprite engine + compositor<br/>(M10K: VRAM, palette, sprite RAM)"]
+        SDCTL["psikyo_sdram_top<br/>sdram.sv 3 ports, burst-4<br/>ldr_* fast-loader port"]
+    end
+
+    SD -->|bridge writes| PKIO
+    PAD --> PKIO
+    MENU --> PKIO
+    PKIO -->|ldr_req/addr/data 16-bit| SDCTL
+    PKIO -->|flags, MCU table, DSW, joysticks| CPU
+    PKIO --> MCU
+    CPU <--> SRAMC
+    SRAMC <-->|64K x 16| SRAM[("Async SRAM<br/>256 KB")]
+    SDCTL <-->|18.5 MB map| DRAM[("SDR SDRAM<br/>64 MB")]
+    CPU <--> VIDEO
+    CPU <--> SDCTL
+    SND <--> SDCTL
+    VIDEO <--> SDCTL
+    CPU --> SND
+    VIDEO --> VID --> SCALER["Pocket scaler<br/>320x224, rotates vertical games"]
+    SND --> AUD --> DAC["I2S DAC 48 kHz"]
+    PLL -.-> SHELL
+    PLL -.-> CORE
+```
+
+Boot sequence: the Pocket streams the `.rom` into `pk_io_psk`, which holds `ldr_active`
+(so the core stays in reset), latches board flags / DIPs / rotation from the header, writes the
+SH404 MCU table, and copies the SDRAM image through the upstream fast-loader port. When the slot
+completes and the FIFO drains, `boot_done` releases the core reset.
+
+---
+
+## 4. MiSTer → Pocket mapping
 
 | MiSTer subsystem | MiSTer implementation | Pocket replacement |
 |---|---|---|
@@ -71,7 +124,7 @@ M10K breakdown (top consumers):
 
 ---
 
-## 4. Memory plan
+## 5. Memory plan
 
 ### SDRAM (`dram_*`, 64 MB, 16-bit SDR)
 
@@ -106,7 +159,7 @@ renderer, and rotation is done by the Pocket scaler.
 
 ---
 
-## 5. Clocks
+## 6. Clocks
 
 The upstream derives every enable (68020 16 MHz, Z80 4 MHz, YM2610 8 MHz, OPL4 33.8688 MHz,
 pixel 7.159 MHz) by Bresenham from `clk_sys = 945/11 MHz`. That frequency is reachable **exactly**
@@ -125,11 +178,11 @@ So no divider constant in the upstream RTL changes. Audio uses a separate PLL fo
 
 **Timing risk:** upstream closes 85.9 MHz on the DE10-nano (speed grade 7) with +0.22 ns of
 slack. The Pocket part is speed grade 8 (≈10–15 % slower), so the critical paths must be
-reworked (see section 8).
+reworked (see section 9).
 
 ---
 
-## 6. ROM format (`.rom`)
+## 7. ROM format (`.rom`)
 
 Built by `tools/build_rom.py` from the upstream `.mra` files and MAME zips:
 
@@ -142,16 +195,19 @@ Built by `tools/build_rom.py` from the upstream `.mra` files and MAME zips:
 | 8 | 4 | payload length |
 | 12 | 4 | payload CRC32 |
 | 16 | 8 | DIP switch defaults |
-| 24 | 8 | reserved |
+| 24 | 1 | rotation (1 = vertical, from `<rotation>`) |
+| 25 | 7 | reserved |
 | 32 | 512 | board blob (flags + SH404 MCU table), zero padded |
 | 544 | n | `.mra` index 0 stream (SDRAM image) |
 
-`pk_io.sv` replays this as the same ioctl sequence the MiSTer core expects: index 1 (board blob),
-index 254 (DIPs), then index 0 (the SDRAM image). The core logic does not change.
+`pk_io_psk.sv` parses the header itself (flags, DIPs, rotation), writes the MCU table from the
+board blob, and copies the SDRAM image through `psikyo_top`'s fast-loader port (`ldr_*`, 16-bit
+writes, the port upstream uses for its DDR3 copy), applying the samuraia ADPCM-A bit swap on the
+way. The core logic does not change.
 
 ---
 
-## 7. Inputs
+## 8. Inputs
 
 | Pocket | Arcade |
 |---|---|
@@ -167,7 +223,7 @@ Player 2 maps from a second docked controller (`cont2_key`).
 
 ---
 
-## 8. Work plan
+## 9. Work plan
 
 1. **Timing closure at 85.9 MHz on C8.** Use the upstream SDC multicycles (68020, Z80, jt12,
    OPL4 PCM, palette path), then pipeline any path still failing. Fallback: run `clk_sys` lower
