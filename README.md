@@ -6,7 +6,9 @@
 
 An openFPGA port of the **Psikyo 68k arcade system** (1993–1996) for the **Analogue Pocket**, based on [`ppriest/Arcade-Psikyo_MiSTer`](https://github.com/ppriest/Arcade-Psikyo_MiSTer).
 
-> **Status: work in progress.** The port is in the design / bring-up phase. No bitstream has been released yet.
+> **Status: v1.0.0, Tengai boots on the Analogue Pocket.** The build meets timing at 85.909 MHz in every corner and the Verilator suite (`sim/run_tests.sh`) passes. The other games have not been tested on hardware yet.
+>
+> At power-up the core checks its own memories: a readback checksum of the 68020 program ROM in SDRAM and a self-test of the work RAM SRAM. If either fails, coloured bands appear at the top of the screen (decode a screenshot with `tools/decode_pocket_bist.py`); a healthy load shows only the game.
 
 ## Target games
 
@@ -18,9 +20,37 @@ An openFPGA port of the **Psikyo 68k arcade system** (1993–1996) for the **Ana
 | Strikers 1945 | `s1945` | SH403 / SH404 | YM2610 / YMF278B |
 | Tengai / Sengoku Blade | `tengai`, `sngkblade` | SH404 | YMF278B (OPL4) |
 
-## Porting plan
+## How it fits on the Pocket
 
-See [`PORTING.md`](PORTING.md) for the hardware mapping (MiSTer → Analogue Pocket), the FPGA resource budget and the clocking plan.
+```mermaid
+flowchart LR
+    ROM[".rom (SD card)"] --> PKIO["pk_io_psk<br/>loader + pads + menu"]
+    PKIO -->|fast-loader port| SDC["SDRAM controller"]
+    SDC <--> DRAM[("SDRAM 64 MB<br/>ROMs, gfx, samples")]
+    CPU["68EC020 (TG68K)"] <--> SRAM[("SRAM 256 KB<br/>work RAM")]
+    CPU <--> SDC
+    CPU --> SND["Z80 + YM2610 / OPL4"] --> I2S["48 kHz I2S"]
+    CPU <--> VID["tilemaps + per-line sprites"] <--> SDC
+    VID --> SCL["Pocket scaler<br/>rotates vertical games"]
+    PLL["PLL: 74.25 MHz x 140/11<br/>= 945 MHz VCO"] -.-> CPU
+```
+
+- **Clock:** 945/11 = 85.909 MHz, exactly the MiSTer `clk_sys`, so every upstream clock divider is unchanged.
+- **Block RAM:** the 128 KB 68020 work RAM moves to the Pocket's async SRAM, freeing 128 of the 308 M10K blocks.
+- **No framebuffer:** sprites are rendered per scanline and vertical games are rotated by the Pocket scaler.
+
+See [`PORTING.md`](PORTING.md) for the full diagram, the hardware mapping (MiSTer → Analogue Pocket), the measured FPGA resource budget and the clocking plan.
+
+## Installing
+
+1. Build the package with `python3 tools/package_pocket.py`, then extract `release/TengaiPoketto_Pocket_v1.0.0.zip` to the root of the SD card.
+2. Build the `.rom` files (below) and copy them to `Assets/psikyo/common/`.
+
+## Building ROMs
+
+```bash
+python3 tools/build_rom.py --all upstream/Arcade-Psikyo_MiSTer/releases /path/to/mame/zips roms/
+```
 
 ## License & Credits
 
