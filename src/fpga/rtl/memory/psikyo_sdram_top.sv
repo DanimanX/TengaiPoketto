@@ -28,6 +28,7 @@
 // client engine needs to know its own placement in the flat SDRAM map.
 module psikyo_sdram_top (
 	input  logic clk,
+	input  logic [1:0] sdram_cap_sel,   // read-data capture point, see sdram.sv
 	input  logic reset,
 	input  logic init,
 
@@ -131,7 +132,17 @@ module psikyo_sdram_top (
 	input  logic         adpcmb_rom_req,
 	input  logic [20:0] adpcmb_rom_addr,
 	output logic         adpcmb_rom_valid,
-	output logic [7:0]  adpcmb_rom_data
+	output logic [7:0]  adpcmb_rom_data,
+
+	// Post-load MAINCPU readback checksum (rtl/memory/psk_romcheck.sv):
+	// write side from the loader stream, read side through the c2 bridge
+	// below once ldr_active falls.
+	output logic         chk_busy,
+	output logic         chk_done,
+	output logic         chk_ok,
+	output logic [31:0] chk_wsum,
+	output logic [31:0] chk_rsum,
+	output logic [19:0] chk_words
 );
 
 	// docs/phase1_sdram_map.md's "Address map" table -- byte offsets into
@@ -166,7 +177,7 @@ module psikyo_sdram_top (
 		.SDRAM_BA(SDRAM_BA), .SDRAM_nCS(SDRAM_nCS), .SDRAM_nWE(SDRAM_nWE),
 		.SDRAM_nRAS(SDRAM_nRAS), .SDRAM_nCAS(SDRAM_nCAS),
 		.SDRAM_CLK(SDRAM_CLK), .SDRAM_CKE(SDRAM_CKE), .SDRAM_DQ(SDRAM_DQ),
-		.init(init), .clk(clk),
+		.init(init), .clk(clk), .cap_sel(sdram_cap_sel),
 		.addr0(p0_addr), .wrl0(p0_wrl), .wrh0(p0_wrh), .din0(p0_din), .dout0(p0_dout), .req0(p0_req), .ack0(p0_ack),
 		.addr1(p1_addr), .wrl1(p1_wrl), .wrh1(p1_wrh), .din1(p1_din), .dout1(p1_dout), .req1(p1_req), .ack1(p1_ack),
 		.addr2(p2_addr), .wrl2(p2_wrl), .wrh2(p2_wrh), .din2(p2_din), .dout2(p2_dout), .req2(p2_req), .ack2(p2_ack)
@@ -341,9 +352,31 @@ module psikyo_sdram_top (
 	logic [15:0] cpu_rom_data_le;
 	assign cpu_rom_data = {cpu_rom_data_le[7:0], cpu_rom_data_le[15:8]};
 
+	// Post-load readback checksum. It borrows the c2 bridge (the CPU is held
+	// in reset while it runs), taking pre-swap data so both sides of the
+	// comparison see the loader's byte order.
+	logic        chk_rd_req;
+	logic [18:0] chk_rd_addr;
+
+	psk_romcheck u_romcheck (
+		.clk(clk), .reset(reset),
+		.ldr_active(ldr_active), .ldr_req(ldr_req), .ldr_busy(ldr_busy),
+		.ldr_addr(ldr_addr), .ldr_data(ldr_data),
+		.rd_req(chk_rd_req), .rd_addr(chk_rd_addr),
+		.rd_valid(cpu_rom_valid), .rd_data(cpu_rom_data_le),
+		.busy(chk_busy), .done(chk_done), .ok(chk_ok),
+		.wsum(chk_wsum), .rsum(chk_rsum), .words(chk_words)
+	);
+
+	logic        cpu_bridge_req;
+	logic [18:0] cpu_bridge_addr;
+
+	assign cpu_bridge_req  = chk_busy ? chk_rd_req  : cpu_rom_req;
+	assign cpu_bridge_addr = chk_busy ? chk_rd_addr : cpu_rom_addr;
+
 	sdram_narrow_bridge #(.WORD_BYTES(2)) u_cpu_bridge (
 		.clk(clk), .reset(reset), .inval(ioctl_download),
-		.req(cpu_rom_req), .addr(MAINCPU_BASE + {5'd0, cpu_rom_addr, 1'b0}),
+		.req(cpu_bridge_req), .addr(MAINCPU_BASE + {5'd0, cpu_bridge_addr, 1'b0}),
 		.valid(cpu_rom_valid), .data(cpu_rom_data_le),
 		.g_req(c2_req), .g_addr(c2_addr), .g_valid(c2_valid), .g_data(c2_data)
 	);

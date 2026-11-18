@@ -1227,7 +1227,12 @@ module psikyo_core #(
 		// buffer holding the 127 ROM reads that preceded it -- the code that
 		// caused the exception. MAME's boot never executes any of the loop's
 		// addresses, so this is a fault path, not game logic.
-		wire trig_vec4 = (cpu_rom_addr == 19'd8);
+		// Pocket: widened to the FIRST fetch of ANY fault vector -- words
+		// 4..0x31 = bytes 0x08..0x63 (bus error .. spurious interrupt). Words
+		// 0-3 are the reset SP/PC and 0x32+ the IRQ autovectors, both legit.
+		// The first hardware capture showed the CPU looping on vectors around
+		// bytes 0x20-0x4F, which the vector-4-only trigger never caught.
+		wire trig_vec4 = (cpu_rom_addr >= 19'd4) && (cpu_rom_addr < 19'h32);
 
 		// dbg_src[0] = ring (latest N) vs first-N + window walk
 		// dbg_src[1] = freeze on trigger

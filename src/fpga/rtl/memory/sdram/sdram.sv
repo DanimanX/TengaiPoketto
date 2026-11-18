@@ -42,6 +42,7 @@ module sdram
 	// cpu/chipset interface
 	input             init,        // init signal after FPGA config to initialize RAM
 	input             clk,         // sdram is accessed at up to 128MHz
+	input       [1:0] cap_sel,     // read capture point (menu), see the capture block
 
 	// port 0 -- addr is the WORD address of the first of 4 sequential words
 	// making up one 64-bit read granule (low 2 bits of the word address
@@ -90,7 +91,7 @@ localparam NO_WRITE_BURST = 1'd1; // 0=write burst enabled, 1=only single access
 
 localparam MODE = { 3'b000, NO_WRITE_BURST, OP_MODE, CAS_LATENCY, ACCESS_TYPE, BURST_LENGTH};
 
-// STATE_LAST now covers 4 read-capture cycles (STATE_READ0..STATE_READ3)
+// STATE_LAST now covers 6 read/completion cycles (STATE_READ0..STATE_READ5)
 // after CAS latency elapses, not just 1 -- see PROVENANCE.md.
 localparam STATE_IDLE   = 4'd0;                // state to check the requests
 localparam STATE_START  = STATE_IDLE+4'd1;     // state in which a new command is started
@@ -102,13 +103,9 @@ localparam STATE_READ0  = STATE_CONT+CAS_LATENCY+4'd1;   // +1: matches upstream
 localparam STATE_READ1  = STATE_READ0+4'd1;
 localparam STATE_READ2  = STATE_READ0+4'd2;
 localparam STATE_READ3  = STATE_READ0+4'd3;
-// Pocket port: the four lanes are taken from dq_in, a plain every-clock
-// register on the pins that Quartus packs into the IOE input register (as
-// SpaceFish's rf_sdram does with dq_reg). The pins are still SAMPLED at the
-// end of STATE_READ0..READ3 -- the same instants as upstream -- but each lane
-// is copied out of dq_in one clk later, so the cycle gains one state.
-localparam STATE_DONE   = STATE_READ3+4'd1;
-localparam STATE_LAST   = STATE_DONE;          // last state in cycle
+localparam STATE_READ4  = STATE_READ0+4'd4;
+localparam STATE_READ5  = STATE_READ0+4'd5;    // also the completion state
+localparam STATE_LAST   = STATE_READ5;          // last state in cycle
 
 reg  [3:0] state = 4'd0;   // upstream relies on Quartus's zero-power-up default for
                             // FPGA registers (real hardware); explicit here since plain
@@ -119,10 +116,17 @@ reg [22:1] a;
 reg [15:0] data;
 reg        we;
 reg  [1:0] ba = 0;
-// IOE input register (FAST_INPUT_REGISTER on dram_dq in the .qsf): no
-// enable, no reset, single destination per pin.
-reg  [15:0] dq_in;
-always @(posedge clk) dq_in <= SDRAM_DQ;
+// DDIO input register on the pins (one altddio_in cell per pin):
+// q_h is the pin sampled at this clk edge, q_l the pin sampled at the clk edge
+// one HALF cycle earlier. Which of the two, and which edge, forms the read
+// capture point is chosen at runtime by cap_sel.
+logic [15:0] dq_h, dq_l;
+psk_ddio_in16 u_dq_in (.clk(clk), .d(SDRAM_DQ), .q_h(dq_h), .q_l(dq_l));
+
+// cap_sel comes from the menu (clk_74a domain), synchronised in pk_io_psk:
+// it is slow-changing, so a plain register here is enough.
+reg  [1:0] csel = 2'd0;
+always @(posedge clk) csel <= cap_sel;
 reg  [1:0] dqm;
 reg        active = 0;
 reg  [2:0] ram_req = 0;
@@ -226,16 +230,56 @@ always @(posedge clk) begin
 		end
 	end
 
-	// Burst-of-4 read capture: one 16-bit lane per cycle across the four
-	// STATE_READ0..STATE_READ3 cycles, ascending address order (lane 0 =
-	// lowest address = dout[15:0]) matching ACCESS_TYPE=sequential above.
-	// Write completion (ack, no data capture) shares STATE_READ3 for a
-	// single uniform completion point -- see PROVENANCE.md for why.
-	if (state == STATE_READ1 && ram_req && !we) dout[15:0]  <= dq_in;   // pin @ end of READ0
-	if (state == STATE_READ2 && ram_req && !we) dout[31:16] <= dq_in;   // pin @ end of READ1
-	if (state == STATE_READ3 && ram_req && !we) dout[47:32] <= dq_in;   // pin @ end of READ2
-	if (state == STATE_DONE && ram_req) begin
-		if (!we) dout[63:48] <= dq_in;                                  // pin @ end of READ3
+	// Burst-of-4 read capture: one 16-bit lane per cycle, ascending address
+	// order (lane 0 = lowest address = dout[15:0]) matching
+	// ACCESS_TYPE=sequential above. Write completion (ack, no data capture)
+	// shares the last state for a single uniform completion point -- see
+	// PROVENANCE.md for why.
+	//
+	// Capture point, runtime-selectable (menu -> cap_sel -> csel). Let E0 be
+	// the clk edge that registers CMD_READ (the edge that ENDS STATE_CONT),
+	// so STATE_READ0 spans E2..E3. dram_clk is clk_sys inverted. During a
+	// state, dq_h holds the pin sampled at the posedge that STARTED that state
+	// and dq_l the pin sampled at the negedge half a clk before it. A lane
+	// written at the end of state S therefore takes:
+	//
+	//   csel 0 (E3, default): lane k in STATE_READ1+k from dq_h -> pin @ E3+k
+	//                         (same instants as upstream / the previous dq_in)
+	//   csel 1 (E2.5):        lane k in STATE_READ1+k from dq_l -> pin @ E2.5+k
+	//   csel 2 (E3.5):        lane k in STATE_READ2+k from dq_l -> pin @ E3.5+k
+	//   csel 3 (E2):          lane k in STATE_READ0+k from dq_h -> pin @ E2+k
+	//
+	// The last lane of csel 2 lands in STATE_READ5 = STATE_LAST, together
+	// with the ack, so the cycle always runs STATE_READ0..STATE_READ5.
+	if (ram_req && !we) begin
+		case (csel)
+			2'd0: begin
+				if (state == STATE_READ1) dout[15:0]  <= dq_h;
+				if (state == STATE_READ2) dout[31:16] <= dq_h;
+				if (state == STATE_READ3) dout[47:32] <= dq_h;
+				if (state == STATE_READ4) dout[63:48] <= dq_h;
+			end
+			2'd1: begin
+				if (state == STATE_READ1) dout[15:0]  <= dq_l;
+				if (state == STATE_READ2) dout[31:16] <= dq_l;
+				if (state == STATE_READ3) dout[47:32] <= dq_l;
+				if (state == STATE_READ4) dout[63:48] <= dq_l;
+			end
+			2'd2: begin
+				if (state == STATE_READ2) dout[15:0]  <= dq_l;
+				if (state == STATE_READ3) dout[31:16] <= dq_l;
+				if (state == STATE_READ4) dout[47:32] <= dq_l;
+				if (state == STATE_READ5) dout[63:48] <= dq_l;
+			end
+			2'd3: begin
+				if (state == STATE_READ0) dout[15:0]  <= dq_h;
+				if (state == STATE_READ1) dout[31:16] <= dq_h;
+				if (state == STATE_READ2) dout[47:32] <= dq_h;
+				if (state == STATE_READ3) dout[63:48] <= dq_h;
+			end
+		endcase
+	end
+	if (state == STATE_LAST && ram_req) begin
 		active <= 0;
 		ram_req <= 0;
 		if (ram_req[0]) ack0 <= req0;

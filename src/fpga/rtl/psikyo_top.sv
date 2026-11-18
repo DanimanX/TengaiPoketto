@@ -49,6 +49,7 @@ module psikyo_top #(
 	output logic [15:0] ext_workram_wdata,
 	input  logic [15:0] ext_workram_rdata,
 	input  logic clk,
+	input  logic [1:0] sdram_cap_sel,   // SDRAM read capture point (menu)
 	input  logic ce_pix,
 	input  logic reset,
 	input  logic init,
@@ -116,6 +117,15 @@ module psikyo_top #(
 	output logic         hsync,
 	output logic         vsync,
 	output logic [14:0] rgb,
+
+	// Post-load MAINCPU readback checksum (rtl/memory/psk_romcheck.sv), for
+	// the Pocket overlay. Checked before core_release -- see core_reset.
+	output logic         chk_busy,
+	output logic         chk_done,
+	output logic         chk_ok,
+	output logic [31:0] chk_wsum,
+	output logic [31:0] chk_rsum,
+	output logic [19:0] chk_words,
 
 	// ---- debug tracer, live-controlled from the OSD ----
 	input  logic         dbg_overlay,
@@ -208,8 +218,10 @@ module psikyo_top #(
 	// Core reset: plain reset OR active download -- see module header.
 	logic core_reset;
 	// ldr_active holds the core off while the bulk DDR3 -> SDRAM copy runs,
-	// exactly as ioctl_download does for the byte-streaming path.
-	assign core_reset = reset | ioctl_download | ldr_active;
+	// exactly as ioctl_download does for the byte-streaming path. chk_busy
+	// extends the same hold through the post-load readback check, so the
+	// CPU cannot fetch a half-verified ROM (the check owns the c2 port).
+	assign core_reset = reset | ioctl_download | ldr_active | chk_busy;
 
 	// SDRAM backend reset -- deliberately NOT plain `reset`, and this is the
 	// second time this project has been bitten by the same hazard.
@@ -239,8 +251,14 @@ module psikyo_top #(
 	// once the download finishes is harmless: sdram.sv itself has no reset
 	// input, its init sequence is driven separately by `init`, and the
 	// contents of the chip are unaffected.
+	//
+	// Third time: the Pocket loader (pk_io_psk) never drives ioctl_download --
+	// it uses ldr_active -- and the Pocket's `reset` includes ~boot_done, which
+	// is low for the whole load. Without ~ldr_active here sdram_arbiter6 sat in
+	// reset, dl_busy never rose, the loader hung in S_WR_LO forever, and
+	// ldr_active (hence core_reset) never fell.
 	logic sdram_reset;
-	assign sdram_reset = reset & ~ioctl_download;
+	assign sdram_reset = reset & ~ioctl_download & ~ldr_active;
 
 
 
@@ -268,7 +286,8 @@ module psikyo_top #(
 		.ext_workram_rdata(ext_workram_rdata),
 		.clk(clk), .ce_pix(ce_pix), .reset(core_reset), .video_reset(reset),
 		.cpu_rom_req(cpu_rom_req), .cpu_rom_addr(cpu_rom_addr),
-		.cpu_rom_valid(cpu_rom_valid), .cpu_rom_data(cpu_rom_data),
+		.cpu_rom_valid(cpu_rom_valid & ~chk_busy),   // romcheck reads share the bridge; keep them out of the CPU and its tracer
+		 .cpu_rom_data(cpu_rom_data),
 		.l0_gfxrom_req(l0_gfxrom_req), .l0_gfxrom_addr(l0_gfxrom_addr),
 		.l0_gfxrom_valid(l0_gfxrom_valid), .l0_gfxrom_data(l0_gfxrom_data),
 		.l1_gfxrom_req(l1_gfxrom_req), .l1_gfxrom_addr(l1_gfxrom_addr),
@@ -606,7 +625,7 @@ module psikyo_top #(
 	// the writes and the fault is in the controller or arbiter.
 
 	psikyo_sdram_top u_sdram (
-		.clk(clk), .reset(sdram_reset), .init(init),
+		.clk(clk), .sdram_cap_sel(sdram_cap_sel), .reset(sdram_reset), .init(init),
 		.SDRAM_A(SDRAM_A), .SDRAM_DQML(SDRAM_DQML), .SDRAM_DQMH(SDRAM_DQMH),
 		.SDRAM_BA(SDRAM_BA), .SDRAM_nCS(SDRAM_nCS), .SDRAM_nWE(SDRAM_nWE),
 		.SDRAM_nRAS(SDRAM_nRAS), .SDRAM_nCAS(SDRAM_nCAS),
@@ -616,6 +635,8 @@ module psikyo_top #(
 		.ioctl_wait(ioctl_wait), .needs_adpcma_swap(needs_adpcma_swap),
 		.ldr_active(ldr_active), .ldr_req(ldr_req), .ldr_addr(ldr_addr),
 		.ldr_data(ldr_data), .ldr_we16(ldr_we16), .ldr_busy(ldr_busy),
+		.chk_busy(chk_busy), .chk_done(chk_done), .chk_ok(chk_ok),
+		.chk_wsum(chk_wsum), .chk_rsum(chk_rsum), .chk_words(chk_words),
 		.l0_gfxrom_req(l0_gfxrom_req), .l0_gfxrom_addr(l0_gfxrom_addr),
 		.l0_gfxrom_valid(l0_gfxrom_valid), .l0_gfxrom_data(l0_gfxrom_data),
 		.l1_gfxrom_req(l1_gfxrom_req), .l1_gfxrom_addr(l1_gfxrom_addr),

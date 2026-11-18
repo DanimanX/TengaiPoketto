@@ -120,9 +120,12 @@
 //      the same open-collector behavior the core's own driver expects.
 
 module maincpu #(
-	// Pocket port: work RAM lives in the external async SRAM, whose registered
-	// read data arrives one clk later than an M10K's. Capture work RAM reads
-	// at acc_ph==3 instead of 2 (PORTING.md section 5).
+	// Pocket port: work RAM lives in the external async SRAM
+	// (pocket_rtl/psk_sram.sv). Its settled address only reaches the pins at
+	// the end of acc_ph 1 (kernel paths are -setup 2), so work RAM reads are
+	// captured at acc_ph==8 and writes acked at acc_ph==6 (55 ns part, see
+	// psk_sram.sv for the budget), which also keeps
+	// the CPU's next access off the SRAM until its write cycle is done.
 	parameter bit EXT_WORKRAM = 1'b0
 ) (
 	input  logic clk,
@@ -368,7 +371,7 @@ module maincpu #(
 	// (BRAM registers its address each edge and returns data one cycle
 	// later, so the first output that corresponds to a settled address
 	// appears at phase 2.)
-	logic [1:0]  acc_ph;
+	logic [3:0]  acc_ph;   // 4 bits: EXT_WORKRAM needs phases up to 8
 
 	wire mem_needed = (busstate != 2'b01);
 	wire is_write   = (busstate == 2'b11);
@@ -448,7 +451,7 @@ module maincpu #(
 	// on the word that actually carries the MCU byte (0xC00006) -- firing
 	// on the 0xC00004 half would invalidate the latch before the second
 	// half returned it (docs/phase2_sh404.md "Read side effects").
-	wire rd_now = mem_needed && !is_write && !is_rom && !acc_ready && (acc_ph == 2'd2);
+	wire rd_now = mem_needed && !is_write && !is_rom && !acc_ready && (acc_ph == 4'd2);
 	assign mcu_rd_consume        = board_sh404 && rd_now && is_dsw  && a32[1];
 	assign mcu_rd_status_toggle  = board_sh404 && rd_now && is_p1p2 && a32[1];
 
@@ -456,16 +459,16 @@ module maincpu #(
 		if (reset) begin
 			acc_ready    <= 1'b0;
 			acc_data     <= 16'h0000;
-			acc_ph       <= 2'd0;
+			acc_ph       <= 4'd0;
 			rom_req_sent <= 1'b0;
 		end else if (cpu_clkena) begin
 			// CPU has consumed this access; arm for the next one
 			acc_ready    <= 1'b0;
-			acc_ph       <= 2'd0;
+			acc_ph       <= 4'd0;
 			rom_req_sent <= 1'b0;
 		end else if (mem_needed && !acc_ready) begin
 			if (rom_req) rom_req_sent <= 1'b1;   // one pulse per access
-			if (acc_ph != 2'd3) acc_ph <= acc_ph + 2'd1;
+			if (acc_ph != 4'd15) acc_ph <= acc_ph + 4'd1;
 			if (is_rom && !is_write) begin
 				// SDRAM latency dominates; rom_req is held until valid
 				if (rom_valid) begin
@@ -473,9 +476,11 @@ module maincpu #(
 					acc_ready <= 1'b1;
 				end
 			end else if (is_write) begin
-				if (acc_ph >= 2'd1) acc_ready <= 1'b1;   // committed this cycle
+				// committed at acc_ph 1; the external SRAM's write cycle runs
+				// until ph4, so the CPU is held off it until then
+				if (acc_ph >= ((EXT_WORKRAM && is_workram) ? 4'd6 : 4'd1)) acc_ready <= 1'b1;
 			end else begin
-				if (acc_ph >= ((EXT_WORKRAM && is_workram) ? 2'd3 : 2'd2)) begin
+				if (acc_ph >= ((EXT_WORKRAM && is_workram) ? 4'd8 : 4'd2)) begin
 					acc_data  <= read_mux;
 					acc_ready <= 1'b1;
 				end
@@ -490,7 +495,7 @@ module maincpu #(
 	// access completes (acc_ph == 1) -- see acc_ph's comment. One cycle is
 	// all a synchronous BRAM port needs, and it gives the sound latch the
 	// single pulse its receiver expects.
-	wire wr_now = mem_needed && is_write && !acc_ready && (acc_ph == 2'd1);
+	wire wr_now = mem_needed && is_write && !acc_ready && (acc_ph == 4'd1);
 
 	assign spriteram_wel   = wr_now && is_spriteram && !nLDS;
 	assign spriteram_weh   = wr_now && is_spriteram && !nUDS;

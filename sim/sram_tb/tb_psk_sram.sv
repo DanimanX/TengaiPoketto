@@ -1,9 +1,29 @@
 // tb_psk_sram: psk_sram against a behavioral 10 ns async SRAM, driven with
-// maincpu's EXT_WORKRAM bus protocol (address from ph0, wel/weh pulse at
-// ph1, read sampled at the end of ph3), random byte/word reads and writes,
+// maincpu's EXT_WORKRAM bus protocol, random byte/word reads and writes,
 // back-to-back with the minimum gap, checked against a reference model.
+//
+// Timing realism (what the first version of this bench lacked, and why it
+// passed a design that failed on the Pocket):
+//  - The CPU address is NOT settled in ph0: core_constraints.sdc gives every
+//    TG68KdotC_Kernel -> register path -setup 2, so the address/wel/weh/wdata
+//    are only guaranteed at the register inputs at the END of ph1. The bench
+//    drives garbage during ph0 and the real values from ph1.
+//  - FPGA -> SRAM pins carry T_OUT of delay (3.3 V LVCMOS 2 mA, IOE tco +
+//    board), SRAM -> FPGA T_IN.
+//  - maincpu commits a work-RAM write (acc_ready) at the end of ph6 and
+//    captures a work-RAM read from wr_rdata at the end of ph8; the CPU can
+//    start the next access one clk after acc_ready (the cpu_clkena cycle).
 `timescale 1ns/1ps
 module tb_psk_sram;
+	// AS6C2016-55 (the Pocket's SRAM) and the IOE budget used by psk_sram.sv
+	localparam real T_OUT  = 10.0;  // FPGA output register -> SRAM pin (worst tco + board)
+	localparam real T_IN   = 2.0;   // SRAM -> FPGA input register
+	localparam real T_AA   = 55.0;  // address access
+	localparam real T_OE   = 30.0;  // OE# low -> data
+	localparam real T_HZ   = 30.0;  // OE# high -> high-Z (tOHZ, worst case for contention)
+	localparam real SKEW   = 4.5;   // pin-to-pin skew the checks must absorb
+	localparam real T_WP   = 45.0, T_DW = 25.0, T_AW = 50.0;
+
 	logic clk = 0;
 	always #5.82 clk = ~clk;          // 85.9 MHz
 
@@ -15,35 +35,72 @@ module tb_psk_sram;
 	wire         oe_n, we_n, ub_n, lb_n;
 
 	psk_sram dut (
-		.clk(clk), .wr_addr(addr), .wr_wel(wel), .wr_weh(weh),
+		.clk(clk), .slow(1'b0), .wr_addr(addr), .wr_wel(wel), .wr_weh(weh),
 		.wr_wdata(wdata), .wr_rdata(rdata),
 		.sram_a(sram_a), .sram_dq(sram_dq), .sram_oe_n(oe_n),
 		.sram_we_n(we_n), .sram_ub_n(ub_n), .sram_lb_n(lb_n)
 	);
 
-	// ---- async SRAM model: 128K x 16, tAA = tOE = 10 ns ----
+	// ---- pins as the SRAM sees them (transport delay) ----
+	logic [16:0] a_p = 0;
+	logic        oe_p = 1, we_p = 1, ub_p = 1, lb_p = 1, drv_p = 0;
+	logic [15:0] dout_p = 0;
+	always @(sram_a)          a_p    <= #(T_OUT) sram_a;
+	always @(oe_n)            oe_p   <= #(T_OUT) oe_n;
+	always @(we_n)            we_p   <= #(T_OUT) we_n;
+	always @(ub_n)            ub_p   <= #(T_OUT) ub_n;
+	always @(lb_n)            lb_p   <= #(T_OUT) lb_n;
+	always @(dut.sram_drive)  drv_p  <= #(T_OUT) dut.sram_drive;
+	always @(dut.sram_dout)   dout_p <= #(T_OUT) dut.sram_dout;
+
+	// ---- async SRAM model: 128K x 16 ----
 	logic [15:0] mem [0:131071];
-	logic [15:0] rd_q;
-	logic        rd_en;
-	always @* rd_en = !oe_n && we_n;
-	always @(sram_a or rd_en) begin
-		if (rd_en) rd_q <= #10 mem[sram_a];
+	logic [15:0] aa_q = 16'hxxxx;     // array output after tAA
+	logic        oe_ok = 0;           // output enabled after tOE / tHZ
+	wire         rd_en = !oe_p && we_p;
+	always @(a_p) begin
+		aa_q <= 16'hxxxx;                       // invalid while settling
+		aa_q <= #(T_AA) mem[a_p];
 	end
-	logic rd_en_d;
-	always @(rd_en) rd_en_d <= #3 rd_en;   // tOLZ / tOHZ ~3 ns
-	assign sram_dq = rd_en_d ? rd_q : 16'hzzzz;
+	always @(rd_en) begin
+		if (rd_en) oe_ok <= #(T_OE) 1'b1;
+		else       oe_ok <= #(T_HZ) 1'b0;
+	end
+	wire         sram_drv = oe_ok && rd_en;
+	logic [15:0] sram_out;
+	always @(aa_q or sram_drv) sram_out <= #(T_IN) (sram_drv ? aa_q : 16'hzzzz);
+	assign sram_dq = sram_out;   // the DUT drives the same net through its own tri-state
 
 	int errors = 0;
-	// write commits on WE# rising edge, per byte lane
-	always @(posedge we_n) begin
-		if (!lb_n) mem[sram_a][7:0]  = sram_dq[7:0];
-		if (!ub_n) mem[sram_a][15:8] = sram_dq[15:8];
-		if (^sram_dq === 1'bx) begin
-			$display("FAIL: write with undriven/contended data at %t", $time); errors++;
+	// write commits on WE# rising edge, per byte lane, data as seen at the SRAM
+	always @(posedge we_p) begin
+		if (!lb_p) mem[a_p][7:0]  = dout_p[7:0];
+		if (!ub_p) mem[a_p][15:8] = dout_p[15:8];
+		// the array output follows the new contents (same address, no a_p event)
+		aa_q <= #(T_AA) mem[a_p];
+		if (!drv_p || ^dout_p === 1'bx) begin
+			$display("FAIL: write without driven data at %t", $time); errors++;
 		end
 	end
+	// write timing at the SRAM pins, each with SKEW of margin
+	realtime we_fall = 0, d_chg = 0, a_chg = 0;
+	always @(negedge we_p) we_fall = $realtime;
+	always @(dout_p or drv_p) d_chg = $realtime;
+	always @(a_p) a_chg = $realtime;
+	always @(posedge we_p) begin
+		if ($realtime - we_fall < T_WP + SKEW) begin
+			$display("FAIL: tWP %0.1f ns at %t", $realtime - we_fall, $time); errors++; end
+		if ($realtime - d_chg < T_DW + SKEW) begin
+			$display("FAIL: tDW %0.1f ns at %t", $realtime - d_chg, $time); errors++; end
+		if ($realtime - a_chg < T_AW + SKEW) begin
+			$display("FAIL: tAW %0.1f ns at %t", $realtime - a_chg, $time); errors++; end
+	end
+	// address must not move while WE# is low
+	always @(a_p) if (!we_p) begin
+		$display("FAIL: address changed during WE# low at %t", $time); errors++;
+	end
 	// both sides driving the bus at once
-	always @(posedge clk) if (dut.sram_drive && rd_en_d) begin
+	always @(posedge clk) if (drv_p && sram_drv) begin
 		$display("FAIL: bus contention at %t", $time); errors++;
 	end
 
@@ -54,20 +111,29 @@ module tb_psk_sram;
 	// ---- maincpu-like bus master ----
 	task automatic access(input bit is_wr, input bit lo, input bit hi,
 	                      input logic [15:0] a, input logic [15:0] d, input int gap);
-		@(posedge clk); addr <= a; wdata <= d;                // ph0
-		@(posedge clk); if (is_wr) begin wel <= lo; weh <= hi; end   // ph1
-		@(posedge clk); wel <= 0; weh <= 0;                   // ph2
+		// ph0: address/data unsettled. wel/weh stay 0: maincpu's wr_now is
+		// gated by acc_ph == 1, a single-cycle register, so no ph0 strobe.
+		@(posedge clk); addr <= 16'($urandom); wdata <= 16'($urandom);
+		@(posedge clk); addr <= a; wdata <= d;                           // ph1: settled
+		                wel <= is_wr & lo; weh <= is_wr & hi;
+		@(posedge clk); wel <= 0; weh <= 0;                              // ph2
+		                addr <= a; wdata <= d;
+		@(posedge clk);                                                  // ph3
 		if (!is_wr) begin
-			@(posedge clk);                                   // ph3
-			@(posedge clk);                                   // capture edge
+			repeat (5) @(posedge clk);                                   // ph4..ph8
+			#1;                                                          // ph8: wr_rdata = pins at end of ph7
 			if (rdata !== ref_mem[a]) begin
 				$display("FAIL: read %04h = %04h, expected %04h at %t", a, rdata, ref_mem[a], $time);
 				errors++;
 			end
+			@(posedge clk);                                              // ph9: clkena cycle
 		end else begin
+			repeat (3) @(posedge clk);                                   // ph4..ph6: ack at end of ph6
+			@(posedge clk);                                              // ph7: clkena cycle
 			if (lo) ref_mem[a][7:0]  = d[7:0];
 			if (hi) ref_mem[a][15:8] = d[15:8];
 		end
+		// the CPU's address moves at the end of the clkena cycle
 		repeat (gap) @(posedge clk);
 	endtask
 
@@ -91,6 +157,7 @@ module tb_psk_sram;
 			if (wr) n_wr++; else n_rd++;
 			access(wr, lanes[0], lanes[1], a, 16'($urandom), $urandom_range(0, 2));
 		end
+		repeat (8) @(posedge clk);
 		// upper half of the SRAM must be untouched (sram_a[16] is always 0)
 		for (int i = 65536; i < 131072; i++) if (mem[i] !== 16'hDEAD) begin
 			$display("FAIL: write leaked to %05h", i); errors++; break;

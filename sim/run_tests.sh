@@ -29,7 +29,7 @@ run() {  # name top sources...
 run sprite_line_diff tb_sprite_line_diff \
     "$R/memory/dpram.sv" "$R"/video/sprite_*.sv "$R/video/tile_row_decode.sv" \
     "$R/memory/sdram_narrow_bridge.sv" "$U/sprite_line_tb/tb_sprite_line_diff.sv"
-SD="$R/memory/sdram/sdram.sv $R/memory/sdram_phy.sv $(find "$R/memory" -name '*.sv' ! -path '*/sdram/sdram.sv' ! -name sdram_phy.sv) $R/sound/adpcma_sample_cache.sv $R/video/*.sv $U/sdram_tb/sdram_chip_model.sv"
+SD="$R/memory/sdram/sdram.sv $R/memory/sdram/psk_ddio_in16.sv $R/memory/sdram_phy.sv $(find "$R/memory" -name '*.sv' ! -path '*/sdram/sdram.sv' ! -name sdram_phy.sv) $R/sound/adpcma_sample_cache.sv $R/video/*.sv $U/sdram_tb/sdram_chip_model.sv"
 # shellcheck disable=SC2086
 run sdram tb_sdram $SD "$U/sdram_tb/tb_sdram.sv"
 # shellcheck disable=SC2086
@@ -38,7 +38,7 @@ run psikyo_sdram_top tb_psikyo_sdram_top $SD "$U/psikyo_sdram_top_tb/tb_psikyo_s
 run port2_sdram tb_port2_sdram $SD "$U/port2_sdram_tb/tb_port2_sdram.sv"
 run opl4 tb_opl4 "$R"/sound/opl4/*.sv "$U/opl4_tb/tb_opl4.sv"
 run adpcma_sample_cache tb_adpcma_sample_cache "$R/sound/adpcma_sample_cache.sv" \
-    "$R/memory/sdram/sdram.sv" "$R/memory/sdram_phy.sv" \
+    "$R/memory/sdram/sdram.sv" "$R/memory/sdram/psk_ddio_in16.sv" "$R/memory/sdram_phy.sv" \
     "$U/sdram_tb/sdram_chip_model.sv" "$U/adpcma_sample_cache_tb/tb_adpcma_sample_cache.sv"
 
 printf '%-24s ' pk_io_psk
@@ -53,6 +53,20 @@ if "$here/sram_tb/run.sh" >"$out/sram.log" 2>&1 && grep -q 'ALL PASS' "$out/sram
     echo PASS
 else
     echo "FAIL (see $out/sram.log)"; fail=1
+fi
+
+printf '%-24s ' psk_sram_bist
+if "$here/sram_bist_tb/run.sh" >"$out/sram_bist.log" 2>&1 && [ "$(grep -c 'ALL PASS' "$out/sram_bist.log")" = 2 ]; then
+    echo PASS
+else
+    echo "FAIL (see $out/sram_bist.log)"; fail=1
+fi
+
+printf '%-24s ' psk_romcheck
+if "$here/romcheck_tb/run.sh" >"$out/romcheck.log" 2>&1 && grep -q 'ALL PASS' "$out/romcheck.log"; then
+    echo PASS
+else
+    echo "FAIL (see $out/romcheck.log)"; fail=1
 fi
 
 exit $fail

@@ -40,6 +40,10 @@ module pk_io_psk #(
 	output reg  [31:0] joystick_1 = 32'd0,
 	output reg         core_reset_btn = 1'b0,
 	output reg  [1:0]  audio_vol = 2'd1,
+	output reg  [1:0]  sdram_cap_sel = 2'd0,   // SDRAM read capture point
+	output reg         dbg_overlay = 1'b0,     // debug tracer overlay (menu)
+	output reg  [1:0]  dbg_src = 2'd0,         // tracer mode: [0] ring, [1] freeze on trigger
+	output reg         dbg_rearm = 1'b0,       // toggles on each menu re-arm
 
 	output reg  [7:0]  board_flags = 8'd0,
 	output reg         vertical = 1'b0,     // .rom header byte 24
@@ -70,6 +74,10 @@ module pk_io_psk #(
 	reg [2:0] lives_74     = 3'd0;   // 0 = default, 1..4 lives
 	reg [1:0] demo_74      = 2'd0;   // 0 = default, 1 = off, 2 = on
 	reg [1:0] vol_74       = 2'd1;
+	reg [1:0] sdcap_74     = 2'd0;
+	reg       dbgovl_74    = 1'b0;
+	reg [1:0] dbgsrc_74    = 2'd0;
+	reg       rearm_74     = 1'b0;
 	reg       apf_reset_n_d = 1'b0;
 
 	// list values arrive in either byte order (bridge_endian_little)
@@ -86,6 +94,10 @@ module pk_io_psk #(
 				INTERACT_BASE + 32'h10: diff_74    <= wv[2:0];
 				INTERACT_BASE + 32'h14: lives_74   <= wv[2:0];
 				INTERACT_BASE + 32'h18: demo_74    <= wv[1:0];
+				INTERACT_BASE + 32'h1C: sdcap_74   <= wv[1:0];
+				INTERACT_BASE + 32'h20: dbgovl_74  <= wv[0];
+				INTERACT_BASE + 32'h24: dbgsrc_74  <= wv[1:0];
+				INTERACT_BASE + 32'h28: if (wv[0]) rearm_74 <= ~rearm_74;
 				default: ;
 			endcase
 		end
@@ -103,6 +115,10 @@ module pk_io_psk #(
 		lives_s  <= lives_74;
 		demo_s   <= demo_74;
 		audio_vol <= vol_74;
+		sdram_cap_sel <= sdcap_74;
+		dbg_overlay <= dbgovl_74;   // quasi-static; the tracer only needs a level change
+		dbg_src     <= dbgsrc_74;
+		dbg_rearm   <= rearm_74;
 		if (rst_sync[2] ^ rst_sync[1]) rst_stretch <= 16'hFFFF;
 		else if (rst_stretch != 16'd0) rst_stretch <= rst_stretch - 16'd1;
 		core_reset_btn <= (rst_stretch != 16'd0);

@@ -188,6 +188,12 @@ module opl4_pcm (
 	logic [31:0] w_step, w_curpos;
 	logic [9:0]  w_env;
 	logic [16:0] w_tl;    // Pocket: ch_tl[ch] registered in S_CALC (timing, C8 part)
+	// Pocket: ch_baseaddr[ch] / ch_format[ch] registered in S_CALC, so the
+	// 24-entry muxes are not in series with the x3 fetch-address arithmetic
+	// (worst path at -0.769 ns). Both are written only by the header load,
+	// which runs from S_IDLE and never inside a channel slot.
+	logic [21:0] w_base;
+	logic [1:0]  w_fmt;
 	logic [2:0]  w_state_eg;
 	logic [17:0] w_lfo;
 	logic signed [15:0] w_sample;
@@ -549,6 +555,8 @@ module opl4_pcm (
 						w_state_eg <= EG_SUSTAIN;
 					// position advance with vibrato and loop wrap
 					w_curpos <= ch_nextpos[ch];
+					w_base   <= ch_baseaddr[ch];
+					w_fmt    <= ch_format[ch];
 					state     <= S_ENV;
 				end
 				// Register the rate chain (corr -> eff_rate -> cur_rate -> eg_inc)
@@ -631,10 +639,10 @@ module opl4_pcm (
 					// -2.385ns. opl4.sv's arbiter latches pcm_mem_addr only
 					// inside if (pcm_mem_req), so an address computed for a
 					// silent channel is never sampled.
-					case (ch_format[ch])
-						2'd0: mem_rd_addr <= ch_baseaddr[ch] + 22'(w_curpos[31:16]);
-						2'd2: mem_rd_addr <= ch_baseaddr[ch] + {5'd0, w_curpos[31:16], 1'b0};
-						default: mem_rd_addr <= ch_baseaddr[ch]
+					case (w_fmt)
+						2'd0: mem_rd_addr <= w_base + 22'(w_curpos[31:16]);
+						2'd2: mem_rd_addr <= w_base + {5'd0, w_curpos[31:16], 1'b0};
+						default: mem_rd_addr <= w_base
 						        + 22'(w_curpos[31:17]) * 22'd3
 						        + (w_curpos[16] ? 22'd2 : 22'd0);
 					endcase
@@ -689,9 +697,9 @@ module opl4_pcm (
 					end else begin
 						// second byte: 16-bit -> pos*2+1; 12-bit -> middle byte
 						mem_rd_req  <= 1'b1;
-						mem_rd_addr <= (ch_format[ch] == 2'd2)
-						  ? ch_baseaddr[ch] + {5'd0, w_curpos[31:16], 1'b0} + 22'd1
-						  : ch_baseaddr[ch] + 22'(w_curpos[31:17]) * 22'd3 + 22'd1;
+						mem_rd_addr <= (w_fmt == 2'd2)
+						  ? w_base + {5'd0, w_curpos[31:16], 1'b0} + 22'd1
+						  : w_base + 22'(w_curpos[31:17]) * 22'd3 + 22'd1;
 						state <= S_FETCH1;
 					end
 				  end
