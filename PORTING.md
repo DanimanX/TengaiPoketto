@@ -130,7 +130,7 @@ completes and the FIFO drains, `boot_done` releases the core reset.
 | Vertical games | `screen_rotate_two` into DDR3 framebuffer | `video.json` scaler modes with `rotation: 270`, chosen per game; **no framebuffer** |
 | CRT Offset | `crt_adjust.sv` | dropped (no analog out) |
 | Audio | `sys/` I2S/HDMI | `sound_i2s.sv`, 48 kHz, linear resampler (SpaceFish) |
-| Work RAM (128 KB) | M10K | Pocket async SRAM (`sram_*`, 256 KB, 10 ns) |
+| Work RAM (128 KB) | M10K | Pocket async SRAM (`sram_*`, 256 KB, AS6C2016-55, 55 ns) |
 | ROM / gfx / samples | SDRAM daughterboard 32 MB | Pocket SDRAM 64 MB (same SDR type) |
 | Hiscore | `hiscore.v` + HPS upload | dropped for v1; candidate: APF nonvolatile save slot |
 | Pause | OSD button | Start+Select chord |
@@ -159,11 +159,16 @@ same PLL output phase-shifted, re-tuned for the Pocket board.
 
 Hosts the 68020 work RAM (`0xFE0000–0xFFFFFF`, 64K × 16), using UB/LB for byte writes. This frees
 128 M10K, leaving ~150 for the Pocket shell. `psikyo_core.sv` gets a `EXT_WORKRAM` parameter that
-exports the work RAM port instead of instantiating `dpram`. `maincpu.sv` reads at `acc_ph==2`
-(two `clk_sys` cycles ≈ 23 ns after the address); with registered SRAM I/O this is extended by one
-phase for work RAM reads only (`acc_ph==3`) to keep a comfortable margin over the 10 ns SRAM
-plus pad delays. Writes are driven by a small controller that asserts `WE#` only while address and
-data are already stable.
+exports the work RAM port instead of instantiating `dpram`.
+
+The part is an **AS6C2016-55** (55 ns: tAA ≤ 55, tWP ≥ 45, tDW ≥ 25, tOE/tOHZ ≤ 30). It was first
+driven as a 10 ns part, and hardware disproved that: the power-up BIST showed a 1-clk `WE#` never
+writing, a 3-clk `WE#` writing only on some power-ups, and the game's first `RTS` popping 0 from a
+stack that had never been written. `psk_sram.sv` now budgets every pin as an IOE register with
+tco ≤ 10 ns plus 4.5 ns of skew (the Saturn reference core's budget). The CPU address is only settled
+at the end of `acc_ph` 1 (kernel paths are `-setup 2`), so work RAM reads are captured at `acc_ph==8`
+(6 clk = 69.8 ns after the address) and writes are acked at `acc_ph==6`: `OE#` high, `WE#` low for
+5 clk (53.7 ns after skew), data driven 3 clk after `OE#` rose and held 1 clk past `WE#`.
 
 ### PSRAM (`cram0/1`)
 
@@ -279,13 +284,13 @@ Player 2 maps from a second docked controller (`cont2_key`).
 1. **Timing closure at 85.9 MHz on C8: done** (section 6). Use the upstream SDC multicycles (68020, Z80, jt12,
    OPL4 PCM, palette path), then pipeline any path still failing. Fallback: run `clk_sys` lower
    and rescale the Bresenham constants (they are all parameters of one denominator).
-2. **SRAM work RAM** (`EXT_WORKRAM`): done (`psk_sram.sv`, verified by `sim/sram_tb`). A boot BIST as in SpaceFish is still to do.
+2. **SRAM work RAM** (`EXT_WORKRAM`): done (`psk_sram.sv`, verified by `sim/sram_tb` against the 55 ns part and on hardware by the power-up BIST, `psk_sram_bist.sv`).
 3. **Pocket top** `psikyo_pocket_top.sv`: PLL, `pk_io`, SDRAM pins, SRAM, video (RGB555→RGB888,
    DE/HS/VS, scaler slot per game), audio resampler, inputs.
 4. **APF metadata**: platform `psikyo`, core `danimanx.TengaiPoketto`, one instance JSON per
    game, `video.json` with horizontal and rotated modes.
-5. **Hardware bring-up**: Tengai first (SH404: MCU + OPL4 + gfx banking, the hardest board), then
-   Strikers 1945, Gunbird, Battle K-Road and Samurai Aces.
+5. **Hardware bring-up**: Tengai boots (v1.0.0). Next: Strikers 1945, Gunbird, Battle K-Road and
+   Samurai Aces.
 
 ---
 
@@ -299,8 +304,11 @@ Player 2 maps from a second docked controller (`cont2_key`).
 | `opl4` | upstream | YMF278B PCM: bus, timers, wavetable headers, key-on/off, looping |
 | `adpcma_sample_cache` | upstream | ADPCM-A/OPL4 granule cache over the real SDRAM controller + chip model, held and pulsed clients |
 | `pk_io_psk` | Pocket | `.rom` streamed over a modelled APF bridge into the fast-loader port, MCU table, DIPs, rotation byte |
-| `psk_sram` | Pocket | work RAM controller against a 10 ns async SRAM model, 20 000 random byte/word accesses, bus contention |
+| `psk_sram` | Pocket | work RAM controller against an AS6C2016-55 model (10 ns pin delay, unsettled CPU address in ph0), 20 000 random byte/word accesses; checks tWP, tDW, tAW, bus contention, address stable under `WE#` |
+| `psk_sram_bist` | Pocket | power-up SRAM self-test: 0 errors on a healthy chip, every word flagged on a chip that never drives the bus |
+| `psk_romcheck` | Pocket | post-load program-ROM readback checksum |
 
 The `psk_sram` suite caught a real bug: the byte lanes were released at the WE# rising edge.
-Putting that variant back makes the suite report 3 081 errors.
+Putting that variant back makes the suite report 3 081 errors. With the 55 ns model, the 3-clk
+`WE#` that failed intermittently on hardware reports 6 711 tWP violations.
 

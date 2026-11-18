@@ -9,7 +9,7 @@
             "description": "Psikyo 68k arcade core (Tengai, Strikers 1945, Gunbird, Samurai Aces, Battle K-Road), ported from Arcade-Psikyo_MiSTer.",
             "author": "danimanx",
             "url": "https://github.com/DanimanX/TengaiPoketto",
-            "version": "0.1.0",
+            "version": "1.0.0",
             "date_release": "2026-11-17"
         },
         "framework": {
